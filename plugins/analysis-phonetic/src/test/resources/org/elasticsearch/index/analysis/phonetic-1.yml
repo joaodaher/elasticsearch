@@ -31,3 +31,6 @@ index:
       daitch_mokotoff:
         type: phonetic
         encoder: daitch_mokotoff
+      portuguesefilter:
+        type: phonetic
+        encoder: portuguese

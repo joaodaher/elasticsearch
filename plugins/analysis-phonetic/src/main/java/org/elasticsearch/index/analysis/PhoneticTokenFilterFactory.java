@@ -44,6 +44,7 @@ import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.analysis.phonetic.HaasePhonetik;
 import org.elasticsearch.index.analysis.phonetic.KoelnerPhonetik;
 import org.elasticsearch.index.analysis.phonetic.Nysiis;
+import org.elasticsearch.index.analysis.phonetic.PortuguesePhonetik;
 
 /**
  *
@@ -110,6 +111,8 @@ public class PhoneticTokenFilterFactory extends AbstractTokenFilterFactory {
             this.encoder = new Nysiis();
         } else if ("daitch_mokotoff".equalsIgnoreCase(encodername)) {
             this.encoder = new DaitchMokotoffSoundex();
+        } else if ("portuguese".equalsIgnoreCase(encodername)) {
+            this.encoder = new PortuguesePhonetik();
         } else {
             throw new IllegalArgumentException("unknown encoder [" + encodername + "] for phonetic token filter");
         }
