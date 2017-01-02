@@ -29,6 +29,7 @@ import org.elasticsearch.action.support.nodes.BaseNodesRequest;
 import org.elasticsearch.action.support.nodes.BaseNodesResponse;
 import org.elasticsearch.action.support.nodes.TransportNodesAction;
 import org.elasticsearch.action.support.replication.ClusterStateCreationUtils;
+import org.elasticsearch.cluster.ClusterModule;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.node.DiscoveryNode;
@@ -180,7 +181,7 @@ public abstract class TaskManagerTestCase extends ESTestCase {
                 }
             };
             transportService.start();
-            clusterService.add(transportService.getTaskManager());
+            clusterService.addStateApplier(transportService.getTaskManager());
             discoveryNode = new DiscoveryNode(name, transportService.boundAddress().publishAddress(),
                     emptyMap(), emptySet(), Version.CURRENT);
             IndexNameExpressionResolver indexNameExpressionResolver = new IndexNameExpressionResolver(settings);

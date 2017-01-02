@@ -23,7 +23,9 @@ import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
 
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.AbstractDiffable;
+import org.elasticsearch.cluster.Diff;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.compress.CompressedXContent;
@@ -35,6 +37,7 @@ import org.elasticsearch.common.util.set.Sets;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
+import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentParser;
 
 import java.io.IOException;
@@ -46,8 +49,6 @@ import java.util.Set;
  *
  */
 public class IndexTemplateMetaData extends AbstractDiffable<IndexTemplateMetaData> {
-
-    public static final IndexTemplateMetaData PROTO = IndexTemplateMetaData.builder("").build();
 
     private final String name;
 
@@ -201,8 +202,7 @@ public class IndexTemplateMetaData extends AbstractDiffable<IndexTemplateMetaDat
         return result;
     }
 
-    @Override
-    public IndexTemplateMetaData readFrom(StreamInput in) throws IOException {
+    public static IndexTemplateMetaData readFrom(StreamInput in) throws IOException {
         Builder builder = new Builder(in.readString());
         builder.order(in.readInt());
         builder.template(in.readString());
@@ -213,7 +213,7 @@ public class IndexTemplateMetaData extends AbstractDiffable<IndexTemplateMetaDat
         }
         int aliasesSize = in.readVInt();
         for (int i = 0; i < aliasesSize; i++) {
-            AliasMetaData aliasMd = AliasMetaData.Builder.readFrom(in);
+            AliasMetaData aliasMd = new AliasMetaData(in);
             builder.putAlias(aliasMd);
         }
         int customSize = in.readVInt();
@@ -226,6 +226,10 @@ public class IndexTemplateMetaData extends AbstractDiffable<IndexTemplateMetaDat
             builder.version(in.readOptionalVInt());
         }
         return builder.build();
+    }
+
+    public static Diff<IndexTemplateMetaData> readDiffFrom(StreamInput in) throws IOException {
+        return readDiffFrom(IndexTemplateMetaData::readFrom, in);
     }
 
     @Override
@@ -386,10 +390,7 @@ public class IndexTemplateMetaData extends AbstractDiffable<IndexTemplateMetaDat
                 builder.startObject("mappings");
                 for (ObjectObjectCursor<String, CompressedXContent> cursor : indexTemplateMetaData.mappings()) {
                     byte[] mappingSource = cursor.value.uncompressed();
-                    Map<String, Object> mapping;
-                    try (XContentParser parser = XContentFactory.xContent(mappingSource).createParser(mappingSource)) {;
-                        mapping = parser.map();
-                    }
+                    Map<String, Object> mapping = XContentHelper.convertToMap(new BytesArray(mappingSource), false).v2();
                     if (mapping.size() == 1 && mapping.containsKey(cursor.key)) {
                         // the type name is the root value, reduce it
                         mapping = (Map<String, Object>) mapping.get(cursor.key);
@@ -402,10 +403,7 @@ public class IndexTemplateMetaData extends AbstractDiffable<IndexTemplateMetaDat
                 builder.startArray("mappings");
                 for (ObjectObjectCursor<String, CompressedXContent> cursor : indexTemplateMetaData.mappings()) {
                     byte[] data = cursor.value.uncompressed();
-                    try (XContentParser parser = XContentFactory.xContent(data).createParser(data)) {
-                        Map<String, Object> mapping = parser.mapOrdered();
-                        builder.map(mapping);
-                    }
+                    builder.map(XContentHelper.convertToMap(new BytesArray(data), true).v2());
                 }
                 builder.endArray();
             }
@@ -511,10 +509,6 @@ public class IndexTemplateMetaData extends AbstractDiffable<IndexTemplateMetaDat
             }
 
             return null;
-        }
-
-        public static IndexTemplateMetaData readFrom(StreamInput in) throws IOException {
-            return PROTO.readFrom(in);
         }
     }
 

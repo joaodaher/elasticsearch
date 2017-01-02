@@ -349,7 +349,6 @@
   <suppress files="core[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]index[/\\]fielddata[/\\]plain[/\\]ParentChildIndexFieldData.java" checks="LineLength" />
   <suppress files="core[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]index[/\\]fielddata[/\\]plain[/\\]SortedNumericDVIndexFieldData.java" checks="LineLength" />
   <suppress files="core[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]index[/\\]fielddata[/\\]plain[/\\]SortedSetDVOrdinalsIndexFieldData.java" checks="LineLength" />
-  <suppress files="core[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]index[/\\]get[/\\]GetResult.java" checks="LineLength" />
   <suppress files="core[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]index[/\\]get[/\\]ShardGetService.java" checks="LineLength" />
   <suppress files="core[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]index[/\\]mapper[/\\]DocumentFieldMappers.java" checks="LineLength" />
   <suppress files="core[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]index[/\\]mapper[/\\]DocumentMapper.java" checks="LineLength" />
@@ -1014,8 +1013,6 @@
   <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]CorruptionUtils.java" checks="LineLength" />
   <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]ESBackcompatTestCase.java" checks="LineLength" />
   <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]ESIntegTestCase.java" checks="LineLength" />
-  <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]ESSingleNodeTestCase.java" checks="LineLength" />
-  <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]ESTestCase.java" checks="LineLength" />
   <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]ExternalNode.java" checks="LineLength" />
   <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]ExternalTestCluster.java" checks="LineLength" />
   <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]IndexSettingsModule.java" checks="LineLength" />
@@ -1029,7 +1026,6 @@
   <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]engine[/\\]AssertingSearcher.java" checks="LineLength" />
   <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]engine[/\\]MockEngineSupport.java" checks="LineLength" />
   <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]hamcrest[/\\]ElasticsearchAssertions.java" checks="LineLength" />
-  <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]junit[/\\]listeners[/\\]LoggingListener.java" checks="LineLength" />
   <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]store[/\\]MockFSDirectoryService.java" checks="LineLength" />
   <suppress files="test[/\\]framework[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]test[/\\]store[/\\]MockFSIndexStore.java" checks="LineLength" />
   <suppress files="core[/\\]src[/\\]main[/\\]java[/\\]org[/\\]elasticsearch[/\\]common[/\\]cli[/\\]CliTool.java" checks="LineLength" />

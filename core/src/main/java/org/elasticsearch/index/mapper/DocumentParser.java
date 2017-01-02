@@ -59,7 +59,7 @@ final class DocumentParser {
 
         final Mapping mapping = docMapper.mapping();
         final ParseContext.InternalParseContext context;
-        try (XContentParser parser = XContentHelper.createParser(source.source())) {
+        try (XContentParser parser = XContentHelper.createParser(docMapperParser.getXContentRegistry(), source.source())) {
             context = new ParseContext.InternalParseContext(indexSettings.getSettings(),
                     docMapperParser, docMapper, source, parser);
             validateStart(parser);
@@ -678,6 +678,12 @@ final class DocumentParser {
                             Mapper.Builder builder = context.root().findTemplateBuilder(context, currentFieldName, XContentFieldType.DATE);
                             if (builder == null) {
                                 builder = newDateBuilder(currentFieldName, dateTimeFormatter, Version.indexCreated(context.indexSettings()));
+                            }
+                            if (builder instanceof DateFieldMapper.Builder) {
+                                DateFieldMapper.Builder dateBuilder = (DateFieldMapper.Builder) builder;
+                                if (dateBuilder.isDateTimeFormatterSet() == false) {
+                                    dateBuilder.dateTimeFormatter(dateTimeFormatter);
+                                }
                             }
                             return builder;
                         } catch (Exception e) {

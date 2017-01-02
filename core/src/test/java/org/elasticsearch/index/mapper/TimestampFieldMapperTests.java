@@ -76,9 +76,9 @@ public class TimestampFieldMapperTests extends ESSingleNodeTestCase {
                     .endObject()
                 .endObject().endObject().string();
         IndexService index = createIndex("test");
-        IllegalArgumentException expected = expectThrows(IllegalArgumentException.class,
+        MapperParsingException expected = expectThrows(MapperParsingException.class,
                 () -> index.mapperService().merge("type", new CompressedXContent(mapping), MergeReason.MAPPING_UPDATE, false));
-        assertThat(expected.getMessage(), startsWith("[_timestamp] is removed"));
+        assertThat(expected.getMessage(), containsString("[_timestamp] is removed"));
     }
 
     public void testSimpleDisabled() throws Exception {
@@ -278,7 +278,7 @@ public class TimestampFieldMapperTests extends ESSingleNodeTestCase {
             out.close();
             BytesReference bytes = out.bytes();
 
-            MappingMetaData metaData = MappingMetaData.PROTO.readFrom(bytes.streamInput());
+            MappingMetaData metaData = new MappingMetaData(bytes.streamInput());
 
             assertThat(metaData, is(expected));
         }
@@ -295,7 +295,7 @@ public class TimestampFieldMapperTests extends ESSingleNodeTestCase {
             out.close();
             BytesReference bytes = out.bytes();
 
-            MappingMetaData metaData = MappingMetaData.PROTO.readFrom(bytes.streamInput());
+            MappingMetaData metaData = new MappingMetaData(bytes.streamInput());
 
             assertThat(metaData, is(expected));
         }
@@ -312,7 +312,7 @@ public class TimestampFieldMapperTests extends ESSingleNodeTestCase {
             out.close();
             BytesReference bytes = out.bytes();
 
-            MappingMetaData metaData = MappingMetaData.PROTO.readFrom(bytes.streamInput());
+            MappingMetaData metaData = new MappingMetaData(bytes.streamInput());
 
             assertThat(metaData, is(expected));
         }

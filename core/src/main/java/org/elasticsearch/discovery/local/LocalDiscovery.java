@@ -27,6 +27,7 @@ import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.Diff;
 import org.elasticsearch.cluster.IncompatibleClusterStateVersionException;
+import org.elasticsearch.cluster.LocalClusterUpdateTask;
 import org.elasticsearch.cluster.block.ClusterBlocks;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
@@ -36,6 +37,7 @@ import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
+import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
@@ -68,6 +70,7 @@ public class LocalDiscovery extends AbstractLifecycleComponent implements Discov
     private final ClusterName clusterName;
 
     private final DiscoverySettings discoverySettings;
+    private final NamedWriteableRegistry namedWriteableRegistry;
 
     private volatile boolean master = false;
 
@@ -76,11 +79,12 @@ public class LocalDiscovery extends AbstractLifecycleComponent implements Discov
     private volatile ClusterState lastProcessedClusterState;
 
     @Inject
-    public LocalDiscovery(Settings settings, ClusterService clusterService, ClusterSettings clusterSettings) {
+    public LocalDiscovery(Settings settings, ClusterService clusterService, ClusterSettings clusterSettings, NamedWriteableRegistry namedWriteableRegistry) {
         super(settings);
         this.clusterName = clusterService.getClusterName();
         this.clusterService = clusterService;
         this.discoverySettings = new DiscoverySettings(settings, clusterSettings);
+        this.namedWriteableRegistry = namedWriteableRegistry;
     }
 
     @Override
@@ -125,23 +129,16 @@ public class LocalDiscovery extends AbstractLifecycleComponent implements Discov
                 // we are the first master (and the master)
                 master = true;
                 final LocalDiscovery master = firstMaster;
-                clusterService.submitStateUpdateTask("local-disco-initial_connect(master)", new ClusterStateUpdateTask() {
+                clusterService.submitStateUpdateTask("local-disco-initial_connect(master)", new LocalClusterUpdateTask() {
 
                     @Override
-                    public boolean runOnlyOnMaster() {
-                        return false;
-                    }
-
-                    @Override
-                    public ClusterState execute(ClusterState currentState) {
+                    public ClusterTasksResult<LocalClusterUpdateTask> execute(ClusterState currentState) {
                         DiscoveryNodes.Builder nodesBuilder = DiscoveryNodes.builder();
                         for (LocalDiscovery discovery : clusterGroups.get(clusterName).members()) {
                             nodesBuilder.add(discovery.localNode());
                         }
                         nodesBuilder.localNodeId(master.localNode().getId()).masterNodeId(master.localNode().getId());
-                        // remove the NO_MASTER block in this case
-                        ClusterBlocks.Builder blocks = ClusterBlocks.builder().blocks(currentState.blocks()).removeGlobalBlock(discoverySettings.getNoMasterBlock());
-                        return ClusterState.builder(currentState).nodes(nodesBuilder).blocks(blocks).build();
+                        return newState(ClusterState.builder(currentState).nodes(nodesBuilder).build());
                     }
 
                     @Override
@@ -152,21 +149,16 @@ public class LocalDiscovery extends AbstractLifecycleComponent implements Discov
             } else if (firstMaster != null) {
                 // tell the master to send the fact that we are here
                 final LocalDiscovery master = firstMaster;
-                firstMaster.clusterService.submitStateUpdateTask("local-disco-receive(from node[" + localNode() + "])", new ClusterStateUpdateTask() {
+                firstMaster.clusterService.submitStateUpdateTask("local-disco-receive(from node[" + localNode() + "])", new LocalClusterUpdateTask() {
                     @Override
-                    public boolean runOnlyOnMaster() {
-                        return false;
-                    }
-
-                    @Override
-                    public ClusterState execute(ClusterState currentState) {
+                    public ClusterTasksResult<LocalClusterUpdateTask> execute(ClusterState currentState) {
                         DiscoveryNodes.Builder nodesBuilder = DiscoveryNodes.builder();
                         for (LocalDiscovery discovery : clusterGroups.get(clusterName).members()) {
                             nodesBuilder.add(discovery.localNode());
                         }
                         nodesBuilder.localNodeId(master.localNode().getId()).masterNodeId(master.localNode().getId());
                         currentState = ClusterState.builder(currentState).nodes(nodesBuilder).build();
-                        return master.allocationService.reroute(currentState, "node_add");
+                        return newState(master.allocationService.reroute(currentState, "node_add"));
                     }
 
                     @Override
@@ -214,14 +206,9 @@ public class LocalDiscovery extends AbstractLifecycleComponent implements Discov
                 }
 
                 final LocalDiscovery master = firstMaster;
-                master.clusterService.submitStateUpdateTask("local-disco-update", new ClusterStateUpdateTask() {
+                master.clusterService.submitStateUpdateTask("local-disco-update", new LocalClusterUpdateTask() {
                     @Override
-                    public boolean runOnlyOnMaster() {
-                        return false;
-                    }
-
-                    @Override
-                    public ClusterState execute(ClusterState currentState) {
+                    public ClusterTasksResult<LocalClusterUpdateTask> execute(ClusterState currentState) {
                         DiscoveryNodes newNodes = currentState.nodes().removeDeadMembers(newMembers, master.localNode().getId());
                         DiscoveryNodes.Delta delta = newNodes.delta(currentState.nodes());
                         if (delta.added()) {
@@ -229,7 +216,7 @@ public class LocalDiscovery extends AbstractLifecycleComponent implements Discov
                         }
                         // reroute here, so we eagerly remove dead nodes from the routing
                         ClusterState updatedState = ClusterState.builder(currentState).nodes(newNodes).build();
-                        return master.allocationService.deassociateDeadNodes(updatedState, true, "node stopped");
+                        return newState(master.allocationService.deassociateDeadNodes(updatedState, true, "node stopped"));
                     }
 
                     @Override
@@ -322,7 +309,7 @@ public class LocalDiscovery extends AbstractLifecycleComponent implements Discov
                             clusterStateDiffBytes = BytesReference.toBytes(os.bytes());
                         }
                         try {
-                            newNodeSpecificClusterState = discovery.lastProcessedClusterState.readDiffFrom(StreamInput.wrap(clusterStateDiffBytes)).apply(discovery.lastProcessedClusterState);
+                            newNodeSpecificClusterState = ClusterState.readDiffFrom(StreamInput.wrap(clusterStateDiffBytes), discovery.localNode()).apply(discovery.lastProcessedClusterState);
                             logger.trace("sending diff cluster state version [{}] with size {} to [{}]", clusterState.version(), clusterStateDiffBytes.length, discovery.localNode().getName());
                         } catch (IncompatibleClusterStateVersionException ex) {
                             logger.warn((Supplier<?>) () -> new ParameterizedMessage("incompatible cluster state version [{}] - resending complete cluster state", clusterState.version()), ex);
@@ -332,34 +319,28 @@ public class LocalDiscovery extends AbstractLifecycleComponent implements Discov
                         if (clusterStateBytes == null) {
                             clusterStateBytes = Builder.toBytes(clusterState);
                         }
-                        newNodeSpecificClusterState = ClusterState.Builder.fromBytes(clusterStateBytes, discovery.localNode());
+                        newNodeSpecificClusterState = ClusterState.Builder.fromBytes(clusterStateBytes, discovery.localNode(), namedWriteableRegistry);
                     }
                     discovery.lastProcessedClusterState = newNodeSpecificClusterState;
                 }
                 final ClusterState nodeSpecificClusterState = newNodeSpecificClusterState;
 
-                nodeSpecificClusterState.status(ClusterState.ClusterStateStatus.RECEIVED);
                 // ignore cluster state messages that do not include "me", not in the game yet...
                 if (nodeSpecificClusterState.nodes().getLocalNode() != null) {
                     assert nodeSpecificClusterState.nodes().getMasterNode() != null : "received a cluster state without a master";
                     assert !nodeSpecificClusterState.blocks().hasGlobalBlock(discoverySettings.getNoMasterBlock()) : "received a cluster state with a master block";
 
-                    discovery.clusterService.submitStateUpdateTask("local-disco-receive(from master)", new ClusterStateUpdateTask() {
+                    discovery.clusterService.submitStateUpdateTask("local-disco-receive(from master)", new LocalClusterUpdateTask() {
                         @Override
-                        public boolean runOnlyOnMaster() {
-                            return false;
-                        }
-
-                        @Override
-                        public ClusterState execute(ClusterState currentState) {
+                        public ClusterTasksResult<LocalClusterUpdateTask> execute(ClusterState currentState) {
                             if (currentState.supersedes(nodeSpecificClusterState)) {
-                                return currentState;
+                                return unchanged();
                             }
 
                             if (currentState.blocks().hasGlobalBlock(discoverySettings.getNoMasterBlock())) {
                                 // its a fresh update from the master as we transition from a start of not having a master to having one
                                 logger.debug("got first state from fresh master [{}]", nodeSpecificClusterState.nodes().getMasterNodeId());
-                                return nodeSpecificClusterState;
+                                return newState(nodeSpecificClusterState);
                             }
 
                             ClusterState.Builder builder = ClusterState.builder(nodeSpecificClusterState);
@@ -371,7 +352,7 @@ public class LocalDiscovery extends AbstractLifecycleComponent implements Discov
                                 builder.metaData(currentState.metaData());
                             }
 
-                            return builder.build();
+                            return newState(builder.build());
                         }
 
                         @Override

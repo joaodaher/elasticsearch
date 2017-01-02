@@ -2289,6 +2289,7 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
                                                    State.ABORTED,
                                                    Collections.singletonList(indexId),
                                                    System.currentTimeMillis(),
+                                                   repositoryData.getGenId(),
                                                    shards.build()));
                 return ClusterState.builder(currentState).putCustom(SnapshotsInProgress.TYPE, new SnapshotsInProgress(Collections.unmodifiableList(entries))).build();
             }
@@ -2347,7 +2348,7 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
         final ClusterService clusterService = internalCluster().clusterService(internalCluster().getMasterName());
         BlockingClusterStateListener snapshotListener = new BlockingClusterStateListener(clusterService, "update_snapshot [", "update snapshot state", Priority.HIGH);
         try {
-            clusterService.addFirst(snapshotListener);
+            clusterService.addListener(snapshotListener);
             logger.info("--> snapshot");
             ListenableActionFuture<CreateSnapshotResponse> snapshotFuture = client.admin().cluster().prepareCreateSnapshot("test-repo", "test-snap").setWaitForCompletion(true).setIndices("test-idx").execute();
 
@@ -2362,7 +2363,7 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
             assertEquals(numberOfShards, createSnapshotResponse.getSnapshotInfo().successfulShards());
 
         } finally {
-            clusterService.remove(snapshotListener);
+            clusterService.removeListener(snapshotListener);
         }
 
         // Check that we didn't timeout

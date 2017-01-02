@@ -70,7 +70,7 @@ public class SearchSourceBuilderTests extends AbstractSearchTestCase {
 
     private void assertParseSearchSource(SearchSourceBuilder testBuilder, XContentParser parser, ParseFieldMatcher pfm)
             throws IOException {
-        QueryParseContext parseContext = new QueryParseContext(searchRequestParsers.queryParsers, parser, pfm);
+        QueryParseContext parseContext = new QueryParseContext(parser, pfm);
         if (randomBoolean()) {
             parser.nextToken(); // sometimes we move it on the START_OBJECT to
                                 // test the embedded case
@@ -83,7 +83,7 @@ public class SearchSourceBuilderTests extends AbstractSearchTestCase {
     }
 
     private QueryParseContext createParseContext(XContentParser parser) {
-        return new QueryParseContext(searchRequestParsers.queryParsers, parser, ParseFieldMatcher.STRICT);
+        return new QueryParseContext(parser, ParseFieldMatcher.STRICT);
     }
 
     public void testSerialization() throws IOException {
@@ -319,23 +319,26 @@ public class SearchSourceBuilderTests extends AbstractSearchTestCase {
         SearchSourceBuilder builder = new SearchSourceBuilder();
         String query = "{ \"post_filter\": {} }";
         assertParseSearchSource(builder, createParser(JsonXContent.jsonXContent, query), ParseFieldMatcher.EMPTY);
+        assertWarnings("query malformed, empty clause found at [1:19]");
     }
 
     public void testEmptyQuery() throws IOException {
         SearchSourceBuilder builder = new SearchSourceBuilder();
         String query = "{ \"query\": {} }";
         assertParseSearchSource(builder, createParser(JsonXContent.jsonXContent, query), ParseFieldMatcher.EMPTY);
+        assertWarnings("query malformed, empty clause found at [1:13]");
     }
 
     public void testParseIndicesBoost() throws IOException {
         {
             String restContent = " { \"indices_boost\": {\"foo\": 1.0, \"bar\": 2.0}}";
-            try (XContentParser parser = XContentFactory.xContent(restContent).createParser(restContent)) {
+            try (XContentParser parser = createParser(JsonXContent.jsonXContent, restContent)) {
                 SearchSourceBuilder searchSourceBuilder = SearchSourceBuilder.fromXContent(createParseContext(parser),
                     searchRequestParsers.aggParsers, searchRequestParsers.suggesters, searchRequestParsers.searchExtParsers);
                 assertEquals(2, searchSourceBuilder.indexBoosts().size());
                 assertEquals(new SearchSourceBuilder.IndexBoost("foo", 1.0f), searchSourceBuilder.indexBoosts().get(0));
                 assertEquals(new SearchSourceBuilder.IndexBoost("bar", 2.0f), searchSourceBuilder.indexBoosts().get(1));
+                assertWarnings("Object format in indices_boost is deprecated, please use array format instead");
             }
         }
 
@@ -346,7 +349,7 @@ public class SearchSourceBuilderTests extends AbstractSearchTestCase {
                 "        { \"bar\" : 2.0 },\n" +
                 "        { \"baz\" : 3.0 }\n" +
                 "    ]}";
-            try (XContentParser parser = XContentFactory.xContent(restContent).createParser(restContent)) {
+            try (XContentParser parser = createParser(JsonXContent.jsonXContent, restContent)) {
                 SearchSourceBuilder searchSourceBuilder = SearchSourceBuilder.fromXContent(createParseContext(parser),
                     searchRequestParsers.aggParsers, searchRequestParsers.suggesters, searchRequestParsers.searchExtParsers);
                 assertEquals(3, searchSourceBuilder.indexBoosts().size());
@@ -394,7 +397,7 @@ public class SearchSourceBuilderTests extends AbstractSearchTestCase {
     }
 
     private void assertIndicesBoostParseErrorMessage(String restContent, String expectedErrorMessage) throws IOException {
-        try (XContentParser parser = XContentFactory.xContent(restContent).createParser(restContent)) {
+        try (XContentParser parser = createParser(JsonXContent.jsonXContent, restContent)) {
             ParsingException e = expectThrows(ParsingException.class, () -> SearchSourceBuilder.fromXContent(createParseContext(parser),
                 searchRequestParsers.aggParsers, searchRequestParsers.suggesters, searchRequestParsers.searchExtParsers));
             assertEquals(expectedErrorMessage, e.getMessage());

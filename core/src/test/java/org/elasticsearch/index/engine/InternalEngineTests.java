@@ -70,6 +70,7 @@ import org.elasticsearch.common.lucene.uid.Versions;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.VersionType;
@@ -319,7 +320,7 @@ public class InternalEngineTests extends ESTestCase {
         };
         EngineConfig config = new EngineConfig(openMode, shardId, threadPool, indexSettings, null, store, createSnapshotDeletionPolicy(),
                 mergePolicy, iwc.getAnalyzer(), iwc.getSimilarity(), new CodecService(null, logger), listener,
-                new TranslogHandler(shardId.getIndexName(), logger), IndexSearcher.getDefaultQueryCache(),
+                new TranslogHandler(xContentRegistry(), shardId.getIndexName(), logger), IndexSearcher.getDefaultQueryCache(),
                 IndexSearcher.getDefaultQueryCachingPolicy(), translogConfig, TimeValue.timeValueMinutes(5), refreshListener,
             maxUnsafeAutoIdTimestamp);
 
@@ -2017,17 +2018,18 @@ public class InternalEngineTests extends ESTestCase {
 
         public final AtomicInteger recoveredOps = new AtomicInteger(0);
 
-        public TranslogHandler(String indexName, Logger logger) {
+        public TranslogHandler(NamedXContentRegistry xContentRegistry, String indexName, Logger logger) {
             super(new ShardId("test", "_na_", 0), null, logger);
             Settings settings = Settings.builder().put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT).build();
             Index index = new Index(indexName, "_na_");
             IndexSettings indexSettings = IndexSettingsModule.newIndexSettings(index, settings);
             IndexAnalyzers indexAnalyzers = null;
             NamedAnalyzer defaultAnalyzer = new NamedAnalyzer("default", AnalyzerScope.INDEX, new StandardAnalyzer());
-            indexAnalyzers = new IndexAnalyzers(indexSettings, defaultAnalyzer, defaultAnalyzer, defaultAnalyzer, Collections.emptyMap());
+            indexAnalyzers = new IndexAnalyzers(indexSettings, defaultAnalyzer, defaultAnalyzer, defaultAnalyzer, Collections.emptyMap(), Collections.emptyMap());
             SimilarityService similarityService = new SimilarityService(indexSettings, Collections.emptyMap());
             MapperRegistry mapperRegistry = new IndicesModule(Collections.emptyList()).getMapperRegistry();
-            mapperService = new MapperService(indexSettings, indexAnalyzers, similarityService, mapperRegistry, () -> null);
+            mapperService = new MapperService(indexSettings, indexAnalyzers, xContentRegistry, similarityService, mapperRegistry,
+                    () -> null);
         }
 
         @Override
@@ -2189,33 +2191,6 @@ public class InternalEngineTests extends ESTestCase {
                 }
             }
         }
-    }
-
-    public void testDocStats() throws IOException {
-        final int numDocs = randomIntBetween(2, 10); // at least 2 documents otherwise we don't see any deletes below
-        for (int i = 0; i < numDocs; i++) {
-            ParsedDocument doc = testParsedDocument(Integer.toString(i), Integer.toString(i), "test", null, -1, -1, testDocument(), new BytesArray("{}"), null);
-            Engine.Index firstIndexRequest = new Engine.Index(newUid(Integer.toString(i)), doc, Versions.MATCH_ANY, VersionType.INTERNAL, PRIMARY, System.nanoTime(), -1, false);
-            engine.index(firstIndexRequest);
-            assertThat(firstIndexRequest.version(), equalTo(1L));
-        }
-        DocsStats docStats = engine.getDocStats();
-        assertEquals(numDocs, docStats.getCount());
-        assertEquals(0, docStats.getDeleted());
-        engine.forceMerge(randomBoolean(), 1, false, false, false);
-
-        ParsedDocument doc = testParsedDocument(Integer.toString(0), Integer.toString(0), "test", null, -1, -1, testDocument(), new BytesArray("{}"), null);
-        Engine.Index firstIndexRequest = new Engine.Index(newUid(Integer.toString(0)), doc, Versions.MATCH_ANY, VersionType.INTERNAL, PRIMARY, System.nanoTime(), -1, false);
-        engine.index(firstIndexRequest);
-        assertThat(firstIndexRequest.version(), equalTo(2L));
-        engine.flush(); // flush - buffered deletes are not counted
-        docStats = engine.getDocStats();
-        assertEquals(1, docStats.getDeleted());
-        assertEquals(numDocs, docStats.getCount());
-        engine.forceMerge(randomBoolean(), 1, false, false, false);
-        docStats = engine.getDocStats();
-        assertEquals(0, docStats.getDeleted());
-        assertEquals(numDocs, docStats.getCount());
     }
 
     public void testDoubleDelivery() throws IOException {

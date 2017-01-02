@@ -30,13 +30,14 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.ClusterStateListener;
+import org.elasticsearch.cluster.ClusterStateApplier;
 import org.elasticsearch.cluster.ClusterStateTaskConfig;
 import org.elasticsearch.cluster.ClusterStateTaskExecutor;
 import org.elasticsearch.cluster.ClusterStateTaskListener;
 import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.RestoreInProgress;
 import org.elasticsearch.cluster.RestoreInProgress.ShardRestoreStatus;
+import org.elasticsearch.cluster.SnapshotDeletionsInProgress;
 import org.elasticsearch.cluster.block.ClusterBlocks;
 import org.elasticsearch.cluster.metadata.AliasMetaData;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
@@ -95,7 +96,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static java.util.Collections.min;
 import static java.util.Collections.unmodifiableSet;
 import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS;
 import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_CREATION_DATE;
@@ -127,7 +127,7 @@ import static org.elasticsearch.common.util.set.Sets.newHashSet;
  * which removes {@link RestoreInProgress} when all shards are completed. In case of
  * restore failure a normal recovery fail-over process kicks in.
  */
-public class RestoreService extends AbstractComponent implements ClusterStateListener {
+public class RestoreService extends AbstractComponent implements ClusterStateApplier {
 
     public static Version V_5_1_0_UNRELEASED = Version.fromId(5010099);
 
@@ -180,7 +180,7 @@ public class RestoreService extends AbstractComponent implements ClusterStateLis
         this.createIndexService = createIndexService;
         this.metaDataIndexUpgradeService = metaDataIndexUpgradeService;
         transportService.registerRequestHandler(UPDATE_RESTORE_ACTION_NAME, UpdateIndexShardRestoreStatusRequest::new, ThreadPool.Names.SAME, new UpdateRestoreStateRequestHandler());
-        clusterService.add(this);
+        clusterService.addStateApplier(this);
         this.clusterSettings = clusterSettings;
         this.cleanRestoreStateTaskExecutor = new CleanRestoreStateTaskExecutor(logger);
     }
@@ -234,6 +234,13 @@ public class RestoreService extends AbstractComponent implements ClusterStateLis
                     RestoreInProgress restoreInProgress = currentState.custom(RestoreInProgress.TYPE);
                     if (restoreInProgress != null && !restoreInProgress.entries().isEmpty()) {
                         throw new ConcurrentSnapshotExecutionException(snapshot, "Restore process is already running in this cluster");
+                    }
+                    // Check if the snapshot to restore is currently being deleted
+                    SnapshotDeletionsInProgress deletionsInProgress = currentState.custom(SnapshotDeletionsInProgress.TYPE);
+                    if (deletionsInProgress != null && deletionsInProgress.hasDeletionsInProgress()) {
+                        throw new ConcurrentSnapshotExecutionException(snapshot,
+                            "cannot restore a snapshot while a snapshot deletion is in-progress [" +
+                                deletionsInProgress.getEntries().get(0).getSnapshot() + "]");
                     }
 
                     // Updating cluster state
@@ -658,8 +665,8 @@ public class RestoreService extends AbstractComponent implements ClusterStateLis
         }
 
         @Override
-        public BatchResult<Task> execute(final ClusterState currentState, final List<Task> tasks) throws Exception {
-            final BatchResult.Builder<Task> resultBuilder = BatchResult.<Task>builder().successes(tasks);
+        public ClusterTasksResult<Task> execute(final ClusterState currentState, final List<Task> tasks) throws Exception {
+            final ClusterTasksResult.Builder<Task> resultBuilder = ClusterTasksResult.<Task>builder().successes(tasks);
             Set<Snapshot> completedSnapshots = tasks.stream().map(e -> e.snapshot).collect(Collectors.toSet());
             final List<RestoreInProgress.Entry> entries = new ArrayList<>();
             final RestoreInProgress restoreInProgress = currentState.custom(RestoreInProgress.TYPE);
@@ -922,7 +929,7 @@ public class RestoreService extends AbstractComponent implements ClusterStateLis
     }
 
     @Override
-    public void clusterChanged(ClusterChangedEvent event) {
+    public void applyClusterState(ClusterChangedEvent event) {
         try {
             if (event.localNodeMaster()) {
                 cleanupRestoreState(event);

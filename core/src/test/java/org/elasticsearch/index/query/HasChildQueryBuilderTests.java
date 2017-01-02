@@ -36,8 +36,8 @@ import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequest;
 import org.elasticsearch.common.ParseFieldMatcher;
 import org.elasticsearch.common.compress.CompressedXContent;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
+import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.mapper.TypeFieldMapper;
 import org.elasticsearch.index.mapper.Uid;
@@ -109,13 +109,13 @@ public class HasChildQueryBuilderTests extends AbstractQueryTestCase<HasChildQue
         HasChildQueryBuilder hqb = new HasChildQueryBuilder(CHILD_TYPE, innerQueryBuilder,
                 RandomPicks.randomFrom(random(), ScoreMode.values()));
         hqb.minMaxChildren(min, max);
+        hqb.ignoreUnmapped(randomBoolean());
         if (randomBoolean()) {
             hqb.innerHit(new InnerHitBuilder()
                     .setName(randomAsciiOfLengthBetween(1, 10))
                     .setSize(randomIntBetween(0, 100))
-                    .addSort(new FieldSortBuilder(STRING_FIELD_NAME_2).order(SortOrder.ASC)));
+                    .addSort(new FieldSortBuilder(STRING_FIELD_NAME_2).order(SortOrder.ASC)), hqb.ignoreUnmapped());
         }
-        hqb.ignoreUnmapped(randomBoolean());
         return hqb;
     }
 
@@ -194,6 +194,7 @@ public class HasChildQueryBuilderTests extends AbstractQueryTestCase<HasChildQue
                 "    \"_name\" : \"WNzYMJKRwePuRBh\",\n" +
                 "    \"inner_hits\" : {\n" +
                 "      \"name\" : \"inner_hits_name\",\n" +
+                "      \"ignore_unmapped\" : false,\n" +
                 "      \"from\" : 0,\n" +
                 "      \"size\" : 100,\n" +
                 "      \"version\" : false,\n" +
@@ -216,7 +217,7 @@ public class HasChildQueryBuilderTests extends AbstractQueryTestCase<HasChildQue
         assertEquals(query, queryBuilder.childType(), "child");
         assertEquals(query, queryBuilder.scoreMode(), ScoreMode.Avg);
         assertNotNull(query, queryBuilder.innerHit());
-        InnerHitBuilder expected = new InnerHitBuilder(new InnerHitBuilder(), queryBuilder.query(), "child")
+        InnerHitBuilder expected = new InnerHitBuilder(new InnerHitBuilder(), queryBuilder.query(), "child", false)
                 .setName("inner_hits_name")
                 .setSize(100)
                 .addSort(new FieldSortBuilder("mapped_string").order(SortOrder.ASC));
@@ -233,16 +234,11 @@ public class HasChildQueryBuilderTests extends AbstractQueryTestCase<HasChildQue
                 "    \"type\" : \"child\"" +
                 "   }" +
                 "}";
-        XContentParser parser = XContentFactory.xContent(query).createParser(query);
+        XContentParser parser = createParser(JsonXContent.jsonXContent, query);
         QueryParseContext context = createParseContext(parser, ParseFieldMatcher.EMPTY);
         Optional<QueryBuilder> innerQueryBuilder = context.parseInnerQueryBuilder();
-        assertTrue(innerQueryBuilder.isPresent() == false);
-
-        parser = XContentFactory.xContent(query).createParser(query);
-        QueryParseContext otherContext = createParseContext(parser, ParseFieldMatcher.STRICT);
-        IllegalArgumentException ex = expectThrows(IllegalArgumentException.class, () -> otherContext.parseInnerQueryBuilder());
-        assertThat(ex.getMessage(), equalTo("query malformed, empty clause found at [3:17]"));
-        checkWarningHeaders("query malformed, empty clause found at [3:17]");
+        assertFalse(innerQueryBuilder.isPresent());
+        assertWarnings("query malformed, empty clause found at [3:17]");
     }
 
     public void testToQueryInnerQueryType() throws IOException {

@@ -40,7 +40,6 @@ import org.elasticsearch.cluster.ClusterModule;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateObserver;
 import org.elasticsearch.cluster.InternalClusterInfoService;
-import org.elasticsearch.cluster.MasterNodeChangePredicate;
 import org.elasticsearch.cluster.NodeConnectionsService;
 import org.elasticsearch.cluster.action.index.MappingUpdatedAction;
 import org.elasticsearch.cluster.metadata.MetaData;
@@ -75,6 +74,7 @@ import org.elasticsearch.common.transport.BoundTransportAddress;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.elasticsearch.discovery.Discovery;
 import org.elasticsearch.discovery.DiscoveryModule;
@@ -95,7 +95,6 @@ import org.elasticsearch.indices.breaker.CircuitBreakerService;
 import org.elasticsearch.indices.breaker.HierarchyCircuitBreakerService;
 import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
 import org.elasticsearch.indices.cluster.IndicesClusterStateService;
-import org.elasticsearch.indices.query.IndicesQueriesRegistry;
 import org.elasticsearch.indices.recovery.PeerRecoverySourceService;
 import org.elasticsearch.indices.recovery.PeerRecoveryTargetService;
 import org.elasticsearch.indices.recovery.RecoverySettings;
@@ -161,6 +160,8 @@ import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static java.util.stream.Collectors.toList;
 
 /**
  * A node represent a node within a cluster (<tt>cluster.name</tt>). The {@link #client()} can be used
@@ -330,11 +331,8 @@ public class Node implements Closeable {
             final NetworkService networkService = new NetworkService(settings,
                 getCustomNameResolvers(pluginsService.filterPlugins(DiscoveryPlugin.class)));
             final ClusterService clusterService = new ClusterService(settings, settingsModule.getClusterSettings(), threadPool);
-            clusterService.add(scriptModule.getScriptService());
+            clusterService.addListener(scriptModule.getScriptService());
             resourcesToClose.add(clusterService);
-            final TribeService tribeService = new TribeService(settings, clusterService, nodeId,
-                s -> newTribeClientNode(s, classpathPlugins));
-            resourcesToClose.add(tribeService);
             final IngestService ingestService = new IngestService(settings, threadPool, this.environment,
                 scriptModule.getScriptService(), analysisModule.getAnalysisRegistry(), pluginsService.filterPlugins(IngestPlugin.class));
             final ClusterInfoService clusterInfoService = newClusterInfoService(settings, clusterService, threadPool, client);
@@ -356,7 +354,6 @@ public class Node implements Closeable {
                 settingsModule.getClusterSettings(), threadPool, pluginsService.filterPlugins(ActionPlugin.class));
             modules.add(actionModule);
             modules.add(new GatewayModule());
-            modules.add(new RepositoriesModule(this.environment, pluginsService.filterPlugins(RepositoryPlugin.class)));
             CircuitBreakerService circuitBreakerService = createCircuitBreakerService(settingsModule.getSettings(),
                 settingsModule.getClusterSettings());
             resourcesToClose.add(circuitBreakerService);
@@ -368,26 +365,38 @@ public class Node implements Closeable {
                 indicesModule.getNamedWriteables().stream(),
                 searchModule.getNamedWriteables().stream(),
                 pluginsService.filterPlugins(Plugin.class).stream()
-                    .flatMap(p -> p.getNamedWriteables().stream()))
+                    .flatMap(p -> p.getNamedWriteables().stream()),
+                ClusterModule.getNamedWriteables().stream())
                 .flatMap(Function.identity()).collect(Collectors.toList());
             final NamedWriteableRegistry namedWriteableRegistry = new NamedWriteableRegistry(namedWriteables);
-            final MetaStateService metaStateService = new MetaStateService(settings, nodeEnvironment);
-            final IndicesService indicesService = new IndicesService(settings, pluginsService, nodeEnvironment,
-                settingsModule.getClusterSettings(), analysisModule.getAnalysisRegistry(), searchModule.getQueryParserRegistry(),
+            NamedXContentRegistry xContentRegistry = new NamedXContentRegistry(Stream.of(
+                searchModule.getNamedXContents().stream(),
+                pluginsService.filterPlugins(Plugin.class).stream()
+                    .flatMap(p -> p.getNamedXContent().stream()),
+                ClusterModule.getNamedXWriteables().stream())
+                .flatMap(Function.identity()).collect(toList()));
+            final TribeService tribeService = new TribeService(settings, clusterService, nodeId, namedWriteableRegistry,
+                s -> newTribeClientNode(s, classpathPlugins));
+            resourcesToClose.add(tribeService);
+            modules.add(new RepositoriesModule(this.environment, pluginsService.filterPlugins(RepositoryPlugin.class), xContentRegistry));
+            final MetaStateService metaStateService = new MetaStateService(settings, nodeEnvironment, xContentRegistry);
+            final IndicesService indicesService = new IndicesService(settings, pluginsService, nodeEnvironment, xContentRegistry,
+                settingsModule.getClusterSettings(), analysisModule.getAnalysisRegistry(),
                 clusterModule.getIndexNameExpressionResolver(), indicesModule.getMapperRegistry(), namedWriteableRegistry,
                 threadPool, settingsModule.getIndexScopedSettings(), circuitBreakerService, bigArrays, scriptModule.getScriptService(),
                 clusterService, client, metaStateService);
 
             Collection<Object> pluginComponents = pluginsService.filterPlugins(Plugin.class).stream()
                 .flatMap(p -> p.createComponents(client, clusterService, threadPool, resourceWatcherService,
-                                                 scriptModule.getScriptService(), searchModule.getSearchRequestParsers()).stream())
+                                                 scriptModule.getScriptService(), searchModule.getSearchRequestParsers(),
+                                                 xContentRegistry).stream())
                 .collect(Collectors.toList());
             Collection<UnaryOperator<Map<String, MetaData.Custom>>> customMetaDataUpgraders =
                 pluginsService.filterPlugins(Plugin.class).stream()
                 .map(Plugin::getCustomMetaDataUpgrader)
                 .collect(Collectors.toList());
-            final NetworkModule networkModule = new NetworkModule(settings, false, pluginsService.filterPlugins(NetworkPlugin.class), threadPool,
-                bigArrays, circuitBreakerService, namedWriteableRegistry, networkService);
+            final NetworkModule networkModule = new NetworkModule(settings, false, pluginsService.filterPlugins(NetworkPlugin.class),
+                    threadPool, bigArrays, circuitBreakerService, namedWriteableRegistry, xContentRegistry, networkService);
             final MetaDataUpgrader metaDataUpgrader = new MetaDataUpgrader(customMetaDataUpgraders);
             final Transport transport = networkModule.getTransportSupplier().get();
             final TransportService transportService = newTransportService(settings, transport, threadPool,
@@ -408,11 +417,11 @@ public class Node implements Closeable {
             }
 
             final DiscoveryModule discoveryModule = new DiscoveryModule(this.settings, threadPool, transportService,
-                networkService, clusterService, pluginsService.filterPlugins(DiscoveryPlugin.class));
+                namedWriteableRegistry, networkService, clusterService, pluginsService.filterPlugins(DiscoveryPlugin.class));
             modules.add(b -> {
-                    b.bind(IndicesQueriesRegistry.class).toInstance(searchModule.getQueryParserRegistry());
                     b.bind(SearchRequestParsers.class).toInstance(searchModule.getSearchRequestParsers());
                     b.bind(SearchExtRegistry.class).toInstance(searchModule.getSearchExtRegistry());
+                    b.bind(NamedXContentRegistry.class).toInstance(xContentRegistry);
                     b.bind(PluginsService.class).toInstance(pluginsService);
                     b.bind(Client.class).toInstance(client);
                     b.bind(NodeClient.class).toInstance(client);
@@ -441,7 +450,7 @@ public class Node implements Closeable {
                     b.bind(AllocationCommandRegistry.class).toInstance(NetworkModule.getAllocationCommandRegistry());
                     b.bind(UpdateHelper.class).toInstance(new UpdateHelper(settings, scriptModule.getScriptService()));
                     b.bind(MetaDataIndexUpgradeService.class).toInstance(new MetaDataIndexUpgradeService(settings,
-                        indicesModule.getMapperRegistry(), settingsModule.getIndexScopedSettings()));
+                        xContentRegistry, indicesModule.getMapperRegistry(), settingsModule.getIndexScopedSettings()));
                     b.bind(ClusterInfoService.class).toInstance(clusterInfoService);
                     b.bind(Discovery.class).toInstance(discoveryModule.getDiscovery());
                     {
@@ -566,6 +575,7 @@ public class Node implements Closeable {
         injector.getInstance(ResourceWatcherService.class).start();
         injector.getInstance(GatewayService.class).start();
         Discovery discovery = injector.getInstance(Discovery.class);
+        clusterService.setDiscoverySettings(discovery.getDiscoverySettings());
         clusterService.addInitialStateBlock(discovery.getDiscoverySettings().getNoMasterBlock());
         clusterService.setClusterStatePublisher(discovery::publish);
 
@@ -587,7 +597,7 @@ public class Node implements Closeable {
         // playing nice with the life cycle interfaces
         clusterService.setLocalNode(localNode);
         transportService.setLocalNode(localNode);
-        clusterService.add(transportService.getTaskManager());
+        clusterService.addStateApplier(transportService.getTaskManager());
 
         clusterService.start();
 
@@ -599,8 +609,9 @@ public class Node implements Closeable {
         final TimeValue initialStateTimeout = DiscoverySettings.INITIAL_STATE_TIMEOUT_SETTING.get(settings);
         if (initialStateTimeout.millis() > 0) {
             final ThreadPool thread = injector.getInstance(ThreadPool.class);
-            ClusterStateObserver observer = new ClusterStateObserver(clusterService, null, logger, thread.getThreadContext());
-            if (observer.observedState().nodes().getMasterNodeId() == null) {
+            ClusterState clusterState = clusterService.state();
+            ClusterStateObserver observer = new ClusterStateObserver(clusterState, clusterService, null, logger, thread.getThreadContext());
+            if (clusterState.nodes().getMasterNodeId() == null) {
                 logger.debug("waiting to join the cluster. timeout [{}]", initialStateTimeout);
                 final CountDownLatch latch = new CountDownLatch(1);
                 observer.waitForNextChange(new ClusterStateObserver.Listener() {
@@ -618,7 +629,7 @@ public class Node implements Closeable {
                             initialStateTimeout);
                         latch.countDown();
                     }
-                }, MasterNodeChangePredicate.INSTANCE, initialStateTimeout);
+                }, state -> state.nodes().getMasterNodeId() != null, initialStateTimeout);
 
                 try {
                     latch.await();

@@ -26,7 +26,7 @@ import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateListener;
 import org.elasticsearch.cluster.ClusterStateObserver;
-import org.elasticsearch.cluster.ClusterStateUpdateTask;
+import org.elasticsearch.cluster.LocalClusterUpdateTask;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.IndexRoutingTable;
@@ -104,14 +104,17 @@ public class IndicesStore extends AbstractComponent implements ClusterStateListe
         this.deleteShardTimeout = INDICES_STORE_DELETE_SHARD_TIMEOUT.get(settings);
         // Doesn't make sense to delete shards on non-data nodes
         if (DiscoveryNode.isDataNode(settings)) {
-            clusterService.add(this);
+            // we double check nothing has changed when responses come back from other nodes.
+            // it's easier to do that check when the current cluster state is visible.
+            // also it's good in general to let things settle down
+            clusterService.addListener(this);
         }
     }
 
     @Override
     public void close() {
         if (DiscoveryNode.isDataNode(settings)) {
-            clusterService.remove(this);
+            clusterService.removeListener(this);
         }
     }
 
@@ -283,24 +286,19 @@ public class IndicesStore extends AbstractComponent implements ClusterStateListe
                 return;
             }
 
-            clusterService.submitStateUpdateTask("indices_store ([" + shardId + "] active fully on other nodes)", new ClusterStateUpdateTask() {
+            clusterService.submitStateUpdateTask("indices_store ([" + shardId + "] active fully on other nodes)", new LocalClusterUpdateTask() {
                 @Override
-                public boolean runOnlyOnMaster() {
-                    return false;
-                }
-
-                @Override
-                public ClusterState execute(ClusterState currentState) throws Exception {
+                public ClusterTasksResult<LocalClusterUpdateTask> execute(ClusterState currentState) throws Exception {
                     if (clusterStateVersion != currentState.getVersion()) {
                         logger.trace("not deleting shard {}, the update task state version[{}] is not equal to cluster state before shard active api call [{}]", shardId, currentState.getVersion(), clusterStateVersion);
-                        return currentState;
+                        return unchanged();
                     }
                     try {
                         indicesService.deleteShardStore("no longer used", shardId, currentState);
                     } catch (Exception ex) {
                         logger.debug((Supplier<?>) () -> new ParameterizedMessage("{} failed to delete unallocated shard, ignoring", shardId), ex);
                     }
-                    return currentState;
+                    return unchanged();
                 }
 
                 @Override
@@ -360,16 +358,13 @@ public class IndicesStore extends AbstractComponent implements ClusterStateListe
                                 logger.error((Supplier<?>) () -> new ParameterizedMessage("failed send response for shard active while trying to delete shard {} - shard will probably not be removed", request.shardId), e);
                             }
                         }
-                    }, new ClusterStateObserver.ValidationPredicate() {
-                        @Override
-                        protected boolean validate(ClusterState newState) {
-                            // the shard is not there in which case we want to send back a false (shard is not active), so the cluster state listener must be notified
-                            // or the shard is active in which case we want to send back that the shard is active
-                            // here we could also evaluate the cluster state and get the information from there. we
-                            // don't do it because we would have to write another method for this that would have the same effect
-                            IndexShard indexShard = getShard(request);
-                            return indexShard == null || shardActive(indexShard);
-                        }
+                    }, newState -> {
+                        // the shard is not there in which case we want to send back a false (shard is not active), so the cluster state listener must be notified
+                        // or the shard is active in which case we want to send back that the shard is active
+                        // here we could also evaluate the cluster state and get the information from there. we
+                        // don't do it because we would have to write another method for this that would have the same effect
+                        IndexShard currentShard = getShard(request);
+                        return currentShard == null || shardActive(currentShard);
                     });
                 }
             }

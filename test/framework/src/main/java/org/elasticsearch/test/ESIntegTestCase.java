@@ -22,6 +22,7 @@ import com.carrotsearch.randomizedtesting.RandomizedContext;
 import com.carrotsearch.randomizedtesting.annotations.TestGroup;
 import com.carrotsearch.randomizedtesting.generators.RandomNumbers;
 import com.carrotsearch.randomizedtesting.generators.RandomPicks;
+
 import org.apache.http.HttpHost;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.LuceneTestCase;
@@ -59,6 +60,7 @@ import org.elasticsearch.client.Client;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
+import org.elasticsearch.cluster.ClusterModule;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.health.ClusterHealthStatus;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
@@ -76,6 +78,7 @@ import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.collect.Tuple;
+import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.network.NetworkAddress;
 import org.elasticsearch.common.network.NetworkModule;
 import org.elasticsearch.common.regex.Regex;
@@ -88,6 +91,7 @@ import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.EsRejectedExecutionException;
+import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
@@ -154,6 +158,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
@@ -184,6 +189,7 @@ import static org.hamcrest.Matchers.emptyArray;
 import static org.hamcrest.Matchers.emptyIterable;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.startsWith;
 
@@ -335,6 +341,13 @@ public abstract class ESIntegTestCase extends ESTestCase {
     public static void beforeClass() throws Exception {
         SUITE_SEED = randomLong();
         initializeSuiteScope();
+    }
+
+    @Override
+    protected final boolean enableWarningsCheck() {
+        //In an integ test it doesn't make sense to keep track of warnings: if the cluster is external the warnings are in another jvm,
+        //if the cluster is internal the deprecation logger is shared across all nodes
+        return false;
     }
 
     protected final void beforeInternal() throws Exception {
@@ -880,15 +893,45 @@ public abstract class ESIntegTestCase extends ESTestCase {
      * @param timeout time out value to set on {@link org.elasticsearch.action.admin.cluster.health.ClusterHealthRequest}
      */
     public ClusterHealthStatus ensureGreen(TimeValue timeout, String... indices) {
-        ClusterHealthResponse actionGet = client().admin().cluster()
-            .health(Requests.clusterHealthRequest(indices).timeout(timeout).waitForGreenStatus().waitForEvents(Priority.LANGUID).waitForNoRelocatingShards(true)).actionGet();
+        return ensureColor(ClusterHealthStatus.GREEN, timeout, indices);
+    }
+
+    /**
+     * Ensures the cluster has a yellow state via the cluster health API.
+     */
+    public ClusterHealthStatus ensureYellow(String... indices) {
+        return ensureColor(ClusterHealthStatus.YELLOW, TimeValue.timeValueSeconds(30), indices);
+    }
+
+    private ClusterHealthStatus ensureColor(ClusterHealthStatus clusterHealthStatus, TimeValue timeout, String... indices) {
+        String color = clusterHealthStatus.name().toLowerCase(Locale.ROOT);
+        String method = "ensure" + Strings.capitalize(color);
+
+        ClusterHealthRequest healthRequest = Requests.clusterHealthRequest(indices)
+            .timeout(timeout)
+            .waitForStatus(clusterHealthStatus)
+            .waitForEvents(Priority.LANGUID)
+            .waitForNoRelocatingShards(true)
+            // We currently often use ensureGreen or ensureYellow to check whether the cluster is back in a good state after shutting down
+            // a node. If the node that is stopped is the master node, another node will become master and publish a cluster state where it
+            // is master but where the node that was stopped hasn't been removed yet from the cluster state. It will only subsequently
+            // publish a second state where the old master is removed. If the ensureGreen/ensureYellow is timed just right, it will get to
+            // execute before the second cluster state update removes the old master and the condition ensureGreen / ensureYellow will
+            // trivially hold if it held before the node was shut down. The following "waitForNodes" condition ensures that the node has
+            // been removed by the master so that the health check applies to the set of nodes we expect to be part of the cluster.
+            .waitForNodes(Integer.toString(cluster().size()));
+
+        ClusterHealthResponse actionGet = client().admin().cluster().health(healthRequest).actionGet();
         if (actionGet.isTimedOut()) {
-            logger.info("ensureGreen timed out, cluster state:\n{}\n{}",
-                client().admin().cluster().prepareState().get().getState(), client().admin().cluster().preparePendingClusterTasks().get());
-            fail("timed out waiting for green state");
+            logger.info("{} timed out, cluster state:\n{}\n{}",
+                method,
+                client().admin().cluster().prepareState().get().getState(),
+                client().admin().cluster().preparePendingClusterTasks().get());
+            fail("timed out waiting for " + color + " state");
         }
-        assertThat(actionGet.getStatus(), equalTo(ClusterHealthStatus.GREEN));
-        logger.debug("indices {} are green", indices.length == 0 ? "[_all]" : indices);
+        assertThat("Expected at least " + clusterHealthStatus + " but got " + actionGet.getStatus(),
+            actionGet.getStatus().value(), lessThanOrEqualTo(clusterHealthStatus.value()));
+        logger.debug("indices {} are {}", indices.length == 0 ? "[_all]" : indices, color);
         return actionGet.getStatus();
     }
 
@@ -1003,21 +1046,6 @@ public abstract class ESIntegTestCase extends ESTestCase {
     }
 
     /**
-     * Ensures the cluster has a yellow state via the cluster health API.
-     */
-    public ClusterHealthStatus ensureYellow(String... indices) {
-        ClusterHealthResponse actionGet = client().admin().cluster()
-            .health(Requests.clusterHealthRequest(indices).waitForNoRelocatingShards(true).waitForYellowStatus().waitForEvents(Priority.LANGUID)).actionGet();
-        if (actionGet.isTimedOut()) {
-            logger.info("ensureYellow timed out, cluster state:\n{}\n{}",
-                client().admin().cluster().prepareState().get().getState(), client().admin().cluster().preparePendingClusterTasks().get());
-            assertThat("timed out waiting for yellow", actionGet.isTimedOut(), equalTo(false));
-        }
-        logger.debug("indices {} are yellow", indices.length == 0 ? "[_all]" : indices);
-        return actionGet.getStatus();
-    }
-
-    /**
      * Prints the current cluster state as debug logging.
      */
     public void logClusterState() {
@@ -1053,10 +1081,18 @@ public abstract class ESIntegTestCase extends ESTestCase {
      */
     protected void ensureClusterStateConsistency() throws IOException {
         if (cluster() != null && cluster().size() > 0) {
+            final NamedWriteableRegistry namedWriteableRegistry;
+            if (isInternalCluster()) {
+                // If it's internal cluster - using existing registry in case plugin registered custom data
+                namedWriteableRegistry = internalCluster().getInstance(NamedWriteableRegistry.class);
+            } else {
+                // If it's external cluster - fall back to the standard set
+                namedWriteableRegistry = new NamedWriteableRegistry(ClusterModule.getNamedWriteables());
+            }
             ClusterState masterClusterState = client().admin().cluster().prepareState().all().get().getState();
             byte[] masterClusterStateBytes = ClusterState.Builder.toBytes(masterClusterState);
             // remove local node reference
-            masterClusterState = ClusterState.Builder.fromBytes(masterClusterStateBytes, null);
+            masterClusterState = ClusterState.Builder.fromBytes(masterClusterStateBytes, null, namedWriteableRegistry);
             Map<String, Object> masterStateMap = convertToMap(masterClusterState);
             int masterClusterStateSize = ClusterState.Builder.toBytes(masterClusterState).length;
             String masterId = masterClusterState.nodes().getMasterNodeId();
@@ -1064,7 +1100,7 @@ public abstract class ESIntegTestCase extends ESTestCase {
                 ClusterState localClusterState = client.admin().cluster().prepareState().all().setLocal(true).get().getState();
                 byte[] localClusterStateBytes = ClusterState.Builder.toBytes(localClusterState);
                 // remove local node reference
-                localClusterState = ClusterState.Builder.fromBytes(localClusterStateBytes, null);
+                localClusterState = ClusterState.Builder.fromBytes(localClusterStateBytes, null, namedWriteableRegistry);
                 final Map<String, Object> localStateMap = convertToMap(localClusterState);
                 final int localClusterStateSize = ClusterState.Builder.toBytes(localClusterState).length;
                 // Check that the non-master node has the same version of the cluster state as the master and
@@ -2102,6 +2138,17 @@ public abstract class ESIntegTestCase extends ESTestCase {
             builder.put(Environment.PATH_CONF_SETTING.getKey(), configDir.toAbsolutePath());
         }
         return builder.build();
+    }
+
+    @Override
+    protected NamedXContentRegistry xContentRegistry() {
+        if (isInternalCluster() && cluster().size() > 0) {
+            // If it's internal cluster - using existing registry in case plugin registered custom data
+            return internalCluster().getInstance(NamedXContentRegistry.class);
+        } else {
+            // If it's external cluster - fall back to the standard set
+            return new NamedXContentRegistry(ClusterModule.getNamedXWriteables());
+        }
     }
 
     /**

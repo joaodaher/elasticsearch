@@ -49,7 +49,7 @@ public class MapperServiceTests extends ESSingleNodeTestCase {
         String index = "test-index";
         String type = ".test-type";
         String field = "field";
-        MapperParsingException e = expectThrows(MapperParsingException.class, () -> {
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> {
             client().admin().indices().prepareCreate(index)
                     .addMapping(type, field, "type=text")
                     .execute().actionGet();
@@ -62,7 +62,7 @@ public class MapperServiceTests extends ESSingleNodeTestCase {
         String field = "field";
         String type = new String(new char[256]).replace("\0", "a");
 
-        MapperParsingException e = expectThrows(MapperParsingException.class, () -> {
+        MapperException e = expectThrows(MapperException.class, () -> {
             client().admin().indices().prepareCreate(index)
                     .addMapping(type, field, "type=text")
                     .execute().actionGet();
@@ -131,6 +131,7 @@ public class MapperServiceTests extends ESSingleNodeTestCase {
                 .mapperService().merge("type", new CompressedXContent(mapping.apply("type")), MergeReason.MAPPING_UPDATE, false);
         });
         assertTrue(e.getMessage(), e.getMessage().contains("Limit of total fields [1] in index [test2] has been exceeded"));
+        assertWarnings("The [string] field is deprecated, please use [text] or [keyword] instead on [field1]");
     }
 
     public void testMappingDepthExceedsLimit() throws Throwable {
@@ -160,12 +161,13 @@ public class MapperServiceTests extends ESSingleNodeTestCase {
         assertThat(e.getMessage(), containsString("Limit of mapping depth [1] in index [test1] has been exceeded"));
     }
 
-    public void testUnmappedFieldType() {
+    public void testUnmappedFieldType() throws IOException {
         MapperService mapperService = createIndex("index").mapperService();
         assertThat(mapperService.unmappedFieldType("keyword"), instanceOf(KeywordFieldType.class));
         assertThat(mapperService.unmappedFieldType("long"), instanceOf(NumberFieldType.class));
         // back compat
         assertThat(mapperService.unmappedFieldType("string"), instanceOf(KeywordFieldType.class));
+        assertWarnings("[unmapped_type:string] should be replaced with [unmapped_type:keyword]");
     }
 
     public void testMergeWithMap() throws Throwable {
@@ -173,16 +175,16 @@ public class MapperServiceTests extends ESSingleNodeTestCase {
         MapperService mapperService = indexService1.mapperService();
         Map<String, Map<String, Object>> mappings = new HashMap<>();
 
-        mappings.put(MapperService.DEFAULT_MAPPING, MapperService.parseMapping("{}"));
+        mappings.put(MapperService.DEFAULT_MAPPING, MapperService.parseMapping(xContentRegistry(), "{}"));
         MapperException e = expectThrows(MapperParsingException.class,
-            () -> mapperService.merge(mappings, false));
+            () -> mapperService.merge(mappings, MergeReason.MAPPING_UPDATE, false));
         assertThat(e.getMessage(), startsWith("Failed to parse mapping [" + MapperService.DEFAULT_MAPPING + "]: "));
 
         mappings.clear();
-        mappings.put("type1", MapperService.parseMapping("{}"));
+        mappings.put("type1", MapperService.parseMapping(xContentRegistry(), "{}"));
 
         e = expectThrows( MapperParsingException.class,
-            () -> mapperService.merge(mappings, false));
+            () -> mapperService.merge(mappings, MergeReason.MAPPING_UPDATE, false));
         assertThat(e.getMessage(), startsWith("Failed to parse mapping [type1]: "));
     }
 
@@ -206,9 +208,7 @@ public class MapperServiceTests extends ESSingleNodeTestCase {
             .startObject("properties")
             .startObject("field")
             .field("type", "text")
-            .startObject("norms")
-            .field("enabled", false)
-            .endObject()
+            .field("norms", false)
             .endObject()
             .endObject().endObject().bytes());
 

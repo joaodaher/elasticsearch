@@ -39,12 +39,12 @@ import org.apache.lucene.util.IOUtils;
 import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.Version;
+import org.elasticsearch.cluster.SnapshotsInProgress;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.cluster.metadata.RepositoryMetaData;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Numbers;
-import org.elasticsearch.common.ParseFieldMatcher;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.blobstore.BlobContainer;
@@ -68,6 +68,7 @@ import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.iterable.Iterables;
 import org.elasticsearch.common.util.set.Sets;
+import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
@@ -166,6 +167,8 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     protected final RepositoryMetaData metadata;
 
+    protected final NamedXContentRegistry namedXContentRegistry;
+
     private static final int BUFFER_SIZE = 4096;
 
     private static final String LEGACY_SNAPSHOT_PREFIX = "snapshot-";
@@ -224,8 +227,6 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     private final boolean readOnly;
 
-    private final ParseFieldMatcher parseFieldMatcher;
-
     private final ChecksumBlobStoreFormat<BlobStoreIndexShardSnapshot> indexShardSnapshotFormat;
 
     private final LegacyBlobStoreFormat<BlobStoreIndexShardSnapshot> indexShardSnapshotLegacyFormat;
@@ -238,32 +239,39 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
      * @param metadata       The metadata for this repository including name and settings
      * @param globalSettings Settings for the node this repository object is created on
      */
-    protected BlobStoreRepository(RepositoryMetaData metadata, Settings globalSettings) {
+    protected BlobStoreRepository(RepositoryMetaData metadata, Settings globalSettings, NamedXContentRegistry namedXContentRegistry) {
         super(globalSettings);
         this.metadata = metadata;
-        parseFieldMatcher = new ParseFieldMatcher(settings);
+        this.namedXContentRegistry = namedXContentRegistry;
         snapshotRateLimiter = getRateLimiter(metadata.settings(), "max_snapshot_bytes_per_sec", new ByteSizeValue(40, ByteSizeUnit.MB));
         restoreRateLimiter = getRateLimiter(metadata.settings(), "max_restore_bytes_per_sec", new ByteSizeValue(40, ByteSizeUnit.MB));
         readOnly = metadata.settings().getAsBoolean("readonly", false);
-        indexShardSnapshotFormat = new ChecksumBlobStoreFormat<>(SNAPSHOT_CODEC, SNAPSHOT_NAME_FORMAT, BlobStoreIndexShardSnapshot.PROTO, parseFieldMatcher, isCompress());
-        indexShardSnapshotLegacyFormat = new LegacyBlobStoreFormat<>(LEGACY_SNAPSHOT_NAME_FORMAT, BlobStoreIndexShardSnapshot.PROTO, parseFieldMatcher);
-        indexShardSnapshotsFormat = new ChecksumBlobStoreFormat<>(SNAPSHOT_INDEX_CODEC, SNAPSHOT_INDEX_NAME_FORMAT, BlobStoreIndexShardSnapshots.PROTO, parseFieldMatcher, isCompress());
+        indexShardSnapshotFormat = new ChecksumBlobStoreFormat<>(SNAPSHOT_CODEC, SNAPSHOT_NAME_FORMAT,
+            BlobStoreIndexShardSnapshot::fromXContent, namedXContentRegistry, isCompress());
+        indexShardSnapshotLegacyFormat = new LegacyBlobStoreFormat<>(LEGACY_SNAPSHOT_NAME_FORMAT,
+            BlobStoreIndexShardSnapshot::fromXContent, namedXContentRegistry);
+        indexShardSnapshotsFormat = new ChecksumBlobStoreFormat<>(SNAPSHOT_INDEX_CODEC, SNAPSHOT_INDEX_NAME_FORMAT,
+            BlobStoreIndexShardSnapshots::fromXContent, namedXContentRegistry, isCompress());
 
     }
 
     @Override
     protected void doStart() {
         this.snapshotsBlobContainer = blobStore().blobContainer(basePath());
+        globalMetaDataFormat = new ChecksumBlobStoreFormat<>(METADATA_CODEC, METADATA_NAME_FORMAT,
+            MetaData::fromXContent, namedXContentRegistry, isCompress());
+        globalMetaDataLegacyFormat = new LegacyBlobStoreFormat<>(LEGACY_METADATA_NAME_FORMAT,
+            MetaData::fromXContent, namedXContentRegistry);
 
-        ParseFieldMatcher parseFieldMatcher = new ParseFieldMatcher(settings);
-        globalMetaDataFormat = new ChecksumBlobStoreFormat<>(METADATA_CODEC, METADATA_NAME_FORMAT, MetaData.PROTO, parseFieldMatcher, isCompress());
-        globalMetaDataLegacyFormat = new LegacyBlobStoreFormat<>(LEGACY_METADATA_NAME_FORMAT, MetaData.PROTO, parseFieldMatcher);
+        indexMetaDataFormat = new ChecksumBlobStoreFormat<>(INDEX_METADATA_CODEC, METADATA_NAME_FORMAT,
+            IndexMetaData::fromXContent, namedXContentRegistry, isCompress());
+        indexMetaDataLegacyFormat = new LegacyBlobStoreFormat<>(LEGACY_SNAPSHOT_NAME_FORMAT,
+            IndexMetaData::fromXContent, namedXContentRegistry);
 
-        indexMetaDataFormat = new ChecksumBlobStoreFormat<>(INDEX_METADATA_CODEC, METADATA_NAME_FORMAT, IndexMetaData.PROTO, parseFieldMatcher, isCompress());
-        indexMetaDataLegacyFormat = new LegacyBlobStoreFormat<>(LEGACY_SNAPSHOT_NAME_FORMAT, IndexMetaData.PROTO, parseFieldMatcher);
-
-        snapshotFormat = new ChecksumBlobStoreFormat<>(SNAPSHOT_CODEC, SNAPSHOT_NAME_FORMAT, SnapshotInfo.PROTO, parseFieldMatcher, isCompress());
-        snapshotLegacyFormat = new LegacyBlobStoreFormat<>(LEGACY_SNAPSHOT_NAME_FORMAT, SnapshotInfo.PROTO, parseFieldMatcher);
+        snapshotFormat = new ChecksumBlobStoreFormat<>(SNAPSHOT_CODEC, SNAPSHOT_NAME_FORMAT,
+            SnapshotInfo::fromXContent, namedXContentRegistry, isCompress());
+        snapshotLegacyFormat = new LegacyBlobStoreFormat<>(LEGACY_SNAPSHOT_NAME_FORMAT,
+            SnapshotInfo::fromXContent, namedXContentRegistry);
     }
 
     @Override
@@ -372,7 +380,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             final RepositoryData updatedRepoData = repositoryData.initIndices(indexToSnapshots);
             if (isReadOnly() == false) {
                 // write the new index gen file with the indices included
-                writeIndexGen(updatedRepoData);
+                writeIndexGen(updatedRepoData, updatedRepoData.getGenId());
             }
             return updatedRepoData;
         } catch (IOException e) {
@@ -381,7 +389,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
     }
 
     @Override
-    public void deleteSnapshot(SnapshotId snapshotId) {
+    public void deleteSnapshot(SnapshotId snapshotId, long repositoryStateId) {
         if (isReadOnly()) {
             throw new RepositoryException(metadata.name(), "cannot delete snapshot from a readonly repository");
         }
@@ -409,7 +417,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         try {
             // Delete snapshot from the index file, since it is the maintainer of truth of active snapshots
             final RepositoryData updatedRepositoryData = repositoryData.removeSnapshot(snapshotId);
-            writeIndexGen(updatedRepositoryData);
+            writeIndexGen(updatedRepositoryData, repositoryStateId);
 
             // delete the snapshot file
             safeSnapshotBlobDelete(snapshot, snapshotId.getUUID());
@@ -523,7 +531,8 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                                          final long startTime,
                                          final String failure,
                                          final int totalShards,
-                                         final List<SnapshotShardFailure> shardFailures) {
+                                         final List<SnapshotShardFailure> shardFailures,
+                                         final long repositoryStateId) {
         try {
             SnapshotInfo blobStoreSnapshot = new SnapshotInfo(snapshotId,
                                                               indices.stream().map(IndexId::getName).collect(Collectors.toList()),
@@ -536,7 +545,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             final RepositoryData repositoryData = getRepositoryData();
             List<SnapshotId> snapshotIds = repositoryData.getSnapshotIds();
             if (!snapshotIds.contains(snapshotId)) {
-                writeIndexGen(repositoryData.addSnapshot(snapshotId, indices));
+                writeIndexGen(repositoryData.addSnapshot(snapshotId, indices), repositoryStateId);
             }
             return blobStoreSnapshot;
         } catch (IOException ex) {
@@ -734,8 +743,9 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             try (InputStream blob = snapshotsBlobContainer.readBlob(snapshotsIndexBlobName)) {
                 BytesStreamOutput out = new BytesStreamOutput();
                 Streams.copy(blob, out);
-                try (XContentParser parser = XContentHelper.createParser(out.bytes())) {
-                    repositoryData = RepositoryData.fromXContent(parser);
+                // EMPTY is safe here because RepositoryData#fromXContent calls namedObject
+                try (XContentParser parser = XContentHelper.createParser(NamedXContentRegistry.EMPTY, out.bytes())) {
+                    repositoryData = RepositoryData.fromXContent(parser, indexGen);
                 }
             }
             if (legacyFormat) {
@@ -765,8 +775,17 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         return snapshotsBlobContainer;
     }
 
-    protected void writeIndexGen(final RepositoryData repositoryData) throws IOException {
+    protected void writeIndexGen(final RepositoryData repositoryData, final long repositoryStateId) throws IOException {
         assert isReadOnly() == false; // can not write to a read only repository
+        final long currentGen = latestIndexBlobId();
+        if (repositoryStateId != SnapshotsInProgress.UNDEFINED_REPOSITORY_STATE_ID && currentGen != repositoryStateId) {
+            // the index file was updated by a concurrent operation, so we were operating on stale
+            // repository data
+            throw new RepositoryException(metadata.name(), "concurrent modification of the index-N file, expected current generation [" +
+                                              repositoryStateId + "], actual current generation [" + currentGen +
+                                              "] - possibly due to simultaneous snapshot deletion requests");
+        }
+        final long newGen = currentGen + 1;
         final BytesReference snapshotsBytes;
         try (BytesStreamOutput bStream = new BytesStreamOutput()) {
             try (StreamOutput stream = new OutputStreamStreamOutput(bStream)) {
@@ -776,12 +795,11 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
             }
             snapshotsBytes = bStream.bytes();
         }
-        final long gen = latestIndexBlobId() + 1;
         // write the index file
-        writeAtomic(INDEX_FILE_PREFIX + Long.toString(gen), snapshotsBytes);
+        writeAtomic(INDEX_FILE_PREFIX + Long.toString(newGen), snapshotsBytes);
         // delete the N-2 index file if it exists, keep the previous one around as a backup
-        if (isReadOnly() == false && gen - 2 >= 0) {
-            final String oldSnapshotIndexFile = INDEX_FILE_PREFIX + Long.toString(gen - 2);
+        if (isReadOnly() == false && newGen - 2 >= 0) {
+            final String oldSnapshotIndexFile = INDEX_FILE_PREFIX + Long.toString(newGen - 2);
             if (snapshotsBlobContainer.blobExists(oldSnapshotIndexFile)) {
                 snapshotsBlobContainer.deleteBlob(oldSnapshotIndexFile);
             }
@@ -794,7 +812,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         // write the current generation to the index-latest file
         final BytesReference genBytes;
         try (BytesStreamOutput bStream = new BytesStreamOutput()) {
-            bStream.writeLong(gen);
+            bStream.writeLong(newGen);
             genBytes = bStream.bytes();
         }
         if (snapshotsBlobContainer.blobExists(INDEX_LATEST_BLOB)) {
@@ -830,7 +848,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                 //      index-latest blob
                 // in a read-only repository, we can't know which of the two scenarios it is,
                 // but we will assume (1) because we can't do anything about (2) anyway
-                return -1;
+                return RepositoryData.EMPTY_REPO_GEN;
             }
         }
     }
