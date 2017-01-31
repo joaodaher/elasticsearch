@@ -118,6 +118,7 @@ The special characters used for date rounding must be URI encoded as follows:
 `|`:: `%7C`
 `+`:: `%2B`
 `:`:: `%3A`
+`,`:: `%2C`
 ======================================================
 
 The following example shows different forms of date math index names and the final index names
@@ -476,8 +477,9 @@ convention of using underscore casing.
 
 All REST APIs parameters (both request parameters and JSON body) support
 providing boolean "false" as the values: `false`, `0`, `no` and `off`.
-All other values are considered "true". Note, this is not related to
-fields within a document indexed treated as boolean fields.
+All other values are considered "true".
+
+deprecated[5.3.0,Usage of any value other than "false" and "true" is deprecated.]
 
 [float]
 === Number Values

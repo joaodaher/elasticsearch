@@ -24,11 +24,9 @@ import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.index.query.QueryParseContext;
 import org.elasticsearch.rest.BaseRestHandler;
 import org.elasticsearch.rest.BytesRestResponse;
 import org.elasticsearch.rest.RestController;
@@ -36,7 +34,6 @@ import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.RestResponse;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.rest.action.RestBuilderListener;
-import org.elasticsearch.search.SearchRequestParsers;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.suggest.Suggest;
 import org.elasticsearch.search.suggest.SuggestBuilder;
@@ -48,14 +45,8 @@ import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.action.RestActions.buildBroadcastShardsHeader;
 
 public class RestSuggestAction extends BaseRestHandler {
-
-    private final SearchRequestParsers searchRequestParsers;
-
-    @Inject
-    public RestSuggestAction(Settings settings, RestController controller,
-                             SearchRequestParsers searchRequestParsers) {
+    public RestSuggestAction(Settings settings, RestController controller) {
         super(settings);
-        this.searchRequestParsers = searchRequestParsers;
         controller.registerAsDeprecatedHandler(POST, "/_suggest", this,
                 "[POST /_suggest] is deprecated! Use [POST /_search] instead.", deprecationLogger);
         controller.registerAsDeprecatedHandler(GET, "/_suggest", this,
@@ -72,8 +63,7 @@ public class RestSuggestAction extends BaseRestHandler {
                 Strings.splitStringByCommaToArray(request.param("index")), new SearchSourceBuilder());
         searchRequest.indicesOptions(IndicesOptions.fromRequest(request, searchRequest.indicesOptions()));
         try (XContentParser parser = request.contentOrSourceParamParser()) {
-            final QueryParseContext context = new QueryParseContext(parser, parseFieldMatcher);
-            searchRequest.source().suggest(SuggestBuilder.fromXContent(context, searchRequestParsers.suggesters));
+            searchRequest.source().suggest(SuggestBuilder.fromXContent(parser));
         }
         searchRequest.routing(request.param("routing"));
         searchRequest.preference(request.param("preference"));

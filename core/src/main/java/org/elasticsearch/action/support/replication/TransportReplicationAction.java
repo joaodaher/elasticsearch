@@ -24,6 +24,7 @@ import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
 import org.elasticsearch.action.UnavailableShardsException;
+import org.elasticsearch.action.admin.indices.flush.ShardFlushRequest;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.action.support.TransportAction;
@@ -171,7 +172,8 @@ public abstract class TransportReplicationAction<
      * @param shardRequest the request to the primary shard
      * @param primary      the primary shard to perform the operation on
      */
-    protected abstract PrimaryResult shardOperationOnPrimary(Request shardRequest, IndexShard primary) throws Exception;
+    protected abstract PrimaryResult<ReplicaRequest, Response> shardOperationOnPrimary(
+            Request shardRequest, IndexShard primary) throws Exception;
 
     /**
      * Synchronous replica operation on nodes with replica copies. This is done under the lock form
@@ -180,7 +182,7 @@ public abstract class TransportReplicationAction<
      * @param shardRequest the request to the replica shard
      * @param replica      the replica shard to perform the operation on
      */
-    protected abstract ReplicaResult shardOperationOnReplica(ReplicaRequest shardRequest, IndexShard replica);
+    protected abstract ReplicaResult shardOperationOnReplica(ReplicaRequest shardRequest, IndexShard replica) throws Exception;
 
     /**
      * Cluster level block to check before request execution. Returning null means that no blocks need to be checked.
@@ -211,7 +213,7 @@ public abstract class TransportReplicationAction<
 
     protected boolean retryPrimaryException(final Throwable e) {
         return e.getClass() == ReplicationOperation.RetryOnPrimaryException.class
-            || TransportActions.isShardNotAvailableException(e);
+                || TransportActions.isShardNotAvailableException(e);
     }
 
     class OperationTransportHandler implements TransportRequestHandler<Request> {
@@ -312,19 +314,12 @@ public abstract class TransportReplicationAction<
                 } else {
                     setPhase(replicationTask, "primary");
                     final IndexMetaData indexMetaData = clusterService.state().getMetaData().index(request.shardId().getIndex());
-                    final boolean executeOnReplicas = (indexMetaData == null) || shouldExecuteReplication(indexMetaData.getSettings());
+                    final boolean executeOnReplicas = (indexMetaData == null) || shouldExecuteReplication(indexMetaData);
                     final ActionListener<Response> listener = createResponseListener(primaryShardReference);
-                    createReplicatedOperation(request, new ActionListener<PrimaryResult>() {
-                        @Override
-                        public void onResponse(PrimaryResult result) {
-                            result.respond(listener);
-                        }
-
-                        @Override
-                        public void onFailure(Exception e) {
-                            listener.onFailure(e);
-                        }
-                    }, primaryShardReference, executeOnReplicas).execute();
+                    createReplicatedOperation(request,
+                            ActionListener.wrap(result -> result.respond(listener), listener::onFailure),
+                            primaryShardReference, executeOnReplicas)
+                            .execute();
                 }
             } catch (Exception e) {
                 Releasables.closeWhileHandlingException(primaryShardReference); // release shard operation lock before responding to caller
@@ -369,8 +364,8 @@ public abstract class TransportReplicationAction<
             };
         }
 
-        protected ReplicationOperation<Request, ReplicaRequest, PrimaryResult> createReplicatedOperation(
-            Request request, ActionListener<PrimaryResult> listener,
+        protected ReplicationOperation<Request, ReplicaRequest, PrimaryResult<ReplicaRequest, Response>> createReplicatedOperation(
+            Request request, ActionListener<PrimaryResult<ReplicaRequest, Response>> listener,
             PrimaryShardReference primaryShardReference, boolean executeOnReplicas) {
             return new ReplicationOperation<>(request, primaryShardReference, listener,
                 executeOnReplicas, replicasProxy, clusterService::state, logger, actionName
@@ -378,13 +373,28 @@ public abstract class TransportReplicationAction<
         }
     }
 
-    protected class PrimaryResult implements ReplicationOperation.PrimaryResult<ReplicaRequest> {
+    protected static class PrimaryResult<ReplicaRequest extends ReplicationRequest<ReplicaRequest>,
+            Response extends ReplicationResponse>
+            implements ReplicationOperation.PrimaryResult<ReplicaRequest> {
         final ReplicaRequest replicaRequest;
-        final Response finalResponse;
+        public final Response finalResponseIfSuccessful;
+        public final Exception finalFailure;
 
-        public PrimaryResult(ReplicaRequest replicaRequest, Response finalResponse) {
+        /**
+         * Result of executing a primary operation
+         * expects <code>finalResponseIfSuccessful</code> or <code>finalFailure</code> to be not-null
+         */
+        public PrimaryResult(ReplicaRequest replicaRequest, Response finalResponseIfSuccessful, Exception finalFailure) {
+            assert finalFailure != null ^ finalResponseIfSuccessful != null
+                    : "either a response or a failure has to be not null, " +
+                    "found [" + finalFailure + "] failure and ["+ finalResponseIfSuccessful + "] response";
             this.replicaRequest = replicaRequest;
-            this.finalResponse = finalResponse;
+            this.finalResponseIfSuccessful = finalResponseIfSuccessful;
+            this.finalFailure = finalFailure;
+        }
+
+        public PrimaryResult(ReplicaRequest replicaRequest, Response replicationResponse) {
+            this(replicaRequest, replicationResponse, null);
         }
 
         @Override
@@ -394,22 +404,37 @@ public abstract class TransportReplicationAction<
 
         @Override
         public void setShardInfo(ReplicationResponse.ShardInfo shardInfo) {
-            finalResponse.setShardInfo(shardInfo);
+            if (finalResponseIfSuccessful != null) {
+                finalResponseIfSuccessful.setShardInfo(shardInfo);
+            }
         }
 
         public void respond(ActionListener<Response> listener) {
-            listener.onResponse(finalResponse);
+            if (finalResponseIfSuccessful != null) {
+                listener.onResponse(finalResponseIfSuccessful);
+            } else {
+                listener.onFailure(finalFailure);
+            }
         }
     }
 
-    protected class ReplicaResult {
-        /**
-         * Public constructor so subclasses can call it.
-         */
-        public ReplicaResult() {}
+    protected static class ReplicaResult {
+        final Exception finalFailure;
+
+        public ReplicaResult(Exception finalFailure) {
+            this.finalFailure = finalFailure;
+        }
+
+        public ReplicaResult() {
+            this(null);
+        }
 
         public void respond(ActionListener<TransportResponse.Empty> listener) {
-            listener.onResponse(TransportResponse.Empty.INSTANCE);
+            if (finalFailure == null) {
+                listener.onResponse(TransportResponse.Empty.INSTANCE);
+            } else {
+                listener.onFailure(finalFailure);
+            }
         }
     }
 
@@ -486,16 +511,15 @@ public abstract class TransportReplicationAction<
                             request),
                     e);
                 request.onRetry();
-                final ThreadContext.StoredContext context = threadPool.getThreadContext().newStoredContext();
                 observer.waitForNextChange(new ClusterStateObserver.Listener() {
                     @Override
                     public void onNewClusterState(ClusterState state) {
-                        context.close();
                         // Forking a thread on local node via transport service so that custom transport service have an
                         // opportunity to execute custom logic before the replica operation begins
                         String extraMessage = "action [" + transportReplicaAction + "], request[" + request + "]";
                         TransportChannelResponseHandler<TransportResponse.Empty> handler =
-                            new TransportChannelResponseHandler<>(logger, channel, extraMessage, () -> TransportResponse.Empty.INSTANCE);
+                            new TransportChannelResponseHandler<>(logger, channel, extraMessage,
+                                () -> TransportResponse.Empty.INSTANCE);
                         transportService.sendRequest(clusterService.localNode(), transportReplicaAction,
                             new ConcreteShardRequest<>(request, targetAllocationID),
                             handler);
@@ -630,7 +654,6 @@ public abstract class TransportReplicationAction<
                 return;
             }
             final DiscoveryNode node = state.nodes().get(primary.currentNodeId());
-            taskManager.registerChildTask(task, node.getId());
             if (primary.currentNodeId().equals(state.nodes().getLocalNodeId())) {
                 performLocalAction(state, primary, node);
             } else {
@@ -776,11 +799,9 @@ public abstract class TransportReplicationAction<
             }
             setPhase(task, "waiting_for_retry");
             request.onRetry();
-            final ThreadContext.StoredContext context = threadPool.getThreadContext().newStoredContext();
             observer.waitForNextChange(new ClusterStateObserver.Listener() {
                 @Override
                 public void onNewClusterState(ClusterState state) {
-                    context.close();
                     run();
                 }
 
@@ -791,7 +812,6 @@ public abstract class TransportReplicationAction<
 
                 @Override
                 public void onTimeout(TimeValue timeout) {
-                    context.close();
                     // Try one more time...
                     run();
                 }
@@ -881,11 +901,12 @@ public abstract class TransportReplicationAction<
      * Indicated whether this operation should be replicated to shadow replicas or not. If this method returns true the replication phase
      * will be skipped. For example writes such as index and delete don't need to be replicated on shadow replicas but refresh and flush do.
      */
-    protected boolean shouldExecuteReplication(Settings settings) {
-        return IndexMetaData.isIndexUsingShadowReplicas(settings) == false;
+    protected boolean shouldExecuteReplication(IndexMetaData indexMetaData) {
+        return IndexMetaData.isIndexUsingShadowReplicas(indexMetaData.getSettings()) == false;
     }
 
-    class PrimaryShardReference implements ReplicationOperation.Primary<Request, ReplicaRequest, PrimaryResult>, Releasable {
+    class PrimaryShardReference implements
+            ReplicationOperation.Primary<Request, ReplicaRequest, PrimaryResult<ReplicaRequest, Response>>, Releasable {
 
         private final IndexShard indexShard;
         private final Releasable operationLock;
@@ -916,7 +937,9 @@ public abstract class TransportReplicationAction<
         @Override
         public PrimaryResult perform(Request request) throws Exception {
             PrimaryResult result = shardOperationOnPrimary(request, indexShard);
-            result.replicaRequest().primaryTerm(indexShard.getPrimaryTerm());
+            if (result.replicaRequest() != null) {
+                result.replicaRequest().primaryTerm(indexShard.getPrimaryTerm());
+            }
             return result;
         }
 

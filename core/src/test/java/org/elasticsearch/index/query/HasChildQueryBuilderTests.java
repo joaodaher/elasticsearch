@@ -20,7 +20,6 @@
 package org.elasticsearch.index.query;
 
 import com.carrotsearch.randomizedtesting.generators.RandomPicks;
-
 import org.apache.lucene.queries.TermsQuery;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
@@ -33,7 +32,6 @@ import org.apache.lucene.search.similarities.PerFieldSimilarityWrapper;
 import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequest;
-import org.elasticsearch.common.ParseFieldMatcher;
 import org.elasticsearch.common.compress.CompressedXContent;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentParser;
@@ -235,7 +233,7 @@ public class HasChildQueryBuilderTests extends AbstractQueryTestCase<HasChildQue
                 "   }" +
                 "}";
         XContentParser parser = createParser(JsonXContent.jsonXContent, query);
-        QueryParseContext context = createParseContext(parser, ParseFieldMatcher.EMPTY);
+        QueryParseContext context = createParseContext(parser);
         Optional<QueryBuilder> innerQueryBuilder = context.parseInnerQueryBuilder();
         assertFalse(innerQueryBuilder.isPresent());
         assertWarnings("query malformed, empty clause found at [3:17]");
@@ -352,5 +350,16 @@ public class HasChildQueryBuilderTests extends AbstractQueryTestCase<HasChildQue
         failingQueryBuilder.ignoreUnmapped(false);
         QueryShardException e = expectThrows(QueryShardException.class, () -> failingQueryBuilder.toQuery(createShardContext()));
         assertThat(e.getMessage(), containsString("[" + HasChildQueryBuilder.NAME + "] no mapping found for type [unmapped]"));
+    }
+
+    public void testIgnoreUnmappedWithRewrite() throws IOException {
+        // WrapperQueryBuilder makes sure we always rewrite
+        final HasChildQueryBuilder queryBuilder
+            = new HasChildQueryBuilder("unmapped", new WrapperQueryBuilder(new MatchAllQueryBuilder().toString()), ScoreMode.None);
+        queryBuilder.ignoreUnmapped(true);
+        QueryShardContext queryShardContext = createShardContext();
+        Query query = queryBuilder.rewrite(queryShardContext).toQuery(queryShardContext);
+        assertThat(query, notNullValue());
+        assertThat(query, instanceOf(MatchNoDocsQuery.class));
     }
 }

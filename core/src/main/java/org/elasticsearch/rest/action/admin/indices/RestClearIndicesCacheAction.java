@@ -24,9 +24,7 @@ import org.elasticsearch.action.admin.indices.cache.clear.ClearIndicesCacheRespo
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.ParseField;
-import org.elasticsearch.common.ParseFieldMatcher;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.rest.BaseRestHandler;
@@ -45,8 +43,6 @@ import static org.elasticsearch.rest.RestStatus.OK;
 import static org.elasticsearch.rest.action.RestActions.buildBroadcastShardsHeader;
 
 public class RestClearIndicesCacheAction extends BaseRestHandler {
-
-    @Inject
     public RestClearIndicesCacheAction(Settings settings, RestController controller) {
         super(settings);
         controller.registerHandler(POST, "/_cache/clear", this);
@@ -61,7 +57,7 @@ public class RestClearIndicesCacheAction extends BaseRestHandler {
         ClearIndicesCacheRequest clearIndicesCacheRequest = new ClearIndicesCacheRequest(
                 Strings.splitStringByCommaToArray(request.param("index")));
         clearIndicesCacheRequest.indicesOptions(IndicesOptions.fromRequest(request, clearIndicesCacheRequest.indicesOptions()));
-        fromRequest(request, clearIndicesCacheRequest, parseFieldMatcher);
+        fromRequest(request, clearIndicesCacheRequest);
         return channel ->
                 client.admin().indices().clearCache(clearIndicesCacheRequest, new RestBuilderListener<ClearIndicesCacheResponse>(channel) {
             @Override
@@ -79,8 +75,7 @@ public class RestClearIndicesCacheAction extends BaseRestHandler {
         return false;
     }
 
-    public static ClearIndicesCacheRequest fromRequest(final RestRequest request, ClearIndicesCacheRequest clearIndicesCacheRequest,
-            ParseFieldMatcher parseFieldMatcher) {
+    public static ClearIndicesCacheRequest fromRequest(final RestRequest request, ClearIndicesCacheRequest clearIndicesCacheRequest) {
 
         for (Map.Entry<String, String> entry : request.params().entrySet()) {
             if (Fields.QUERY.match(entry.getKey())) {

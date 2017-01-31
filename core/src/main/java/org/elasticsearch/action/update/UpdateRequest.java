@@ -20,14 +20,13 @@
 package org.elasticsearch.action.update;
 
 import org.elasticsearch.action.ActionRequestValidationException;
-import org.elasticsearch.action.DocumentRequest;
+import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.action.support.WriteRequest;
 import org.elasticsearch.action.support.replication.ReplicationRequest;
 import org.elasticsearch.action.support.single.instance.InstanceShardOperationRequest;
 import org.elasticsearch.common.Nullable;
-import org.elasticsearch.common.ParseFieldMatcher;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.logging.DeprecationLogger;
@@ -54,7 +53,7 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
 /**
  */
 public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest>
-        implements DocumentRequest<UpdateRequest>, WriteRequest<UpdateRequest> {
+        implements DocWriteRequest<UpdateRequest>, WriteRequest<UpdateRequest> {
     private static final DeprecationLogger DEPRECATION_LOGGER =
         new DeprecationLogger(Loggers.getLogger(UpdateRequest.class));
 
@@ -471,29 +470,31 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest>
         return this.retryOnConflict;
     }
 
-    /**
-     * Sets the version, which will cause the index operation to only be performed if a matching
-     * version exists and no changes happened on the doc since then.
-     */
+    @Override
     public UpdateRequest version(long version) {
         this.version = version;
         return this;
     }
 
+    @Override
     public long version() {
         return this.version;
     }
 
-    /**
-     * Sets the versioning type. Defaults to {@link VersionType#INTERNAL}.
-     */
+    @Override
     public UpdateRequest versionType(VersionType versionType) {
         this.versionType = versionType;
         return this;
     }
 
+    @Override
     public VersionType versionType() {
         return this.versionType;
+    }
+
+    @Override
+    public OpType opType() {
+        return OpType.UPDATE;
     }
 
     @Override
@@ -717,7 +718,7 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest>
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
             } else if ("script".equals(currentFieldName)) {
-                script = Script.parse(parser, ParseFieldMatcher.EMPTY);
+                script = Script.parse(parser);
             } else if ("scripted_upsert".equals(currentFieldName)) {
                 scriptedUpsert = parser.booleanValue();
             } else if ("upsert".equals(currentFieldName)) {
@@ -743,7 +744,7 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest>
                     fields(fields.toArray(new String[fields.size()]));
                 }
             } else if ("_source".equals(currentFieldName)) {
-                fetchSourceContext = FetchSourceContext.parse(parser);
+                fetchSourceContext = FetchSourceContext.fromXContent(parser);
             }
         }
         if (script != null) {

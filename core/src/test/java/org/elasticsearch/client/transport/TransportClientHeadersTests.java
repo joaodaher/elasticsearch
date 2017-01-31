@@ -33,6 +33,7 @@ import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.TransportAddress;
+import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.plugins.NetworkPlugin;
 import org.elasticsearch.plugins.Plugin;
@@ -106,8 +107,8 @@ public class TransportClientHeadersTests extends AbstractClientHeadersTestCase {
                 fail("takes way too long to get the cluster state");
             }
 
-            assertThat(client.connectedNodes().size(), is(1));
-            assertThat(client.connectedNodes().get(0).getAddress(), is(transportService.boundAddress().publishAddress()));
+            assertEquals(1, client.connectedNodes().size());
+            assertEquals(client.connectedNodes().get(0).getAddress(), transportService.boundAddress().publishAddress());
         }
     }
 
@@ -121,12 +122,13 @@ public class TransportClientHeadersTests extends AbstractClientHeadersTestCase {
             private InternalTransportServiceInterceptor instance = new InternalTransportServiceInterceptor();
 
             @Override
-            public List<TransportInterceptor> getTransportInterceptors() {
+            public List<TransportInterceptor> getTransportInterceptors(ThreadContext threadContext) {
                 return Collections.singletonList(new TransportInterceptor() {
                     @Override
                     public <T extends TransportRequest> TransportRequestHandler<T> interceptHandler(String action, String executor,
+                                                                                                boolean forceExecution,
                                                                                                 TransportRequestHandler<T> actualHandler) {
-                        return instance.interceptHandler(action, executor, actualHandler);
+                        return instance.interceptHandler(action, executor, forceExecution, actualHandler);
                     }
 
                     @Override
@@ -158,7 +160,8 @@ public class TransportClientHeadersTests extends AbstractClientHeadersTestCase {
                         ClusterName cluster1 = new ClusterName("cluster1");
                         ClusterState.Builder builder = ClusterState.builder(cluster1);
                         //the sniffer detects only data nodes
-                        builder.nodes(DiscoveryNodes.builder().add(new DiscoveryNode("node_id", address, Collections.emptyMap(),
+                        builder.nodes(DiscoveryNodes.builder().add(new DiscoveryNode("node_id", "someId", "some_ephemeralId_id",
+                            address.getHost(), address.getAddress(), address, Collections.emptyMap(),
                                 Collections.singleton(DiscoveryNode.Role.DATA), Version.CURRENT)));
                         ((TransportResponseHandler<ClusterStateResponse>) handler)
                                 .handleResponse(new ClusterStateResponse(cluster1, builder.build()));

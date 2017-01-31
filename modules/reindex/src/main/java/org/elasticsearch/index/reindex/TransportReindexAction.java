@@ -37,6 +37,13 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.bulk.BackoffPolicy;
 import org.elasticsearch.action.bulk.BulkItemResponse.Failure;
+import org.elasticsearch.action.bulk.byscroll.AbstractAsyncBulkByScrollAction;
+import org.elasticsearch.action.bulk.byscroll.BulkByScrollParallelizationHelper;
+import org.elasticsearch.action.bulk.byscroll.BulkByScrollResponse;
+import org.elasticsearch.action.bulk.byscroll.ParentBulkByScrollTask;
+import org.elasticsearch.action.bulk.byscroll.ScrollableHitSource;
+import org.elasticsearch.action.bulk.byscroll.ScrollableHitSource.SearchFailure;
+import org.elasticsearch.action.bulk.byscroll.WorkingBulkByScrollTask;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.support.ActionFilters;
@@ -58,7 +65,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.VersionType;
 import org.elasticsearch.index.mapper.TTLFieldMapper;
 import org.elasticsearch.index.mapper.VersionFieldMapper;
-import org.elasticsearch.index.reindex.ScrollableHitSource.SearchFailure;
 import org.elasticsearch.index.reindex.remote.RemoteInfo;
 import org.elasticsearch.index.reindex.remote.RemoteScrollableHitSource;
 import org.elasticsearch.script.Script;
@@ -80,7 +86,7 @@ import static java.util.Collections.synchronizedList;
 import static java.util.Objects.requireNonNull;
 import static org.elasticsearch.index.VersionType.INTERNAL;
 
-public class TransportReindexAction extends HandledTransportAction<ReindexRequest, BulkIndexByScrollResponse> {
+public class TransportReindexAction extends HandledTransportAction<ReindexRequest, BulkByScrollResponse> {
     public static final Setting<List<String>> REMOTE_CLUSTER_WHITELIST =
             Setting.listSetting("reindex.remote.whitelist", emptyList(), Function.identity(), Property.NodeScope);
 
@@ -104,9 +110,9 @@ public class TransportReindexAction extends HandledTransportAction<ReindexReques
     }
 
     @Override
-    protected void doExecute(Task task, ReindexRequest request, ActionListener<BulkIndexByScrollResponse> listener) {
+    protected void doExecute(Task task, ReindexRequest request, ActionListener<BulkByScrollResponse> listener) {
         if (request.getSlices() > 1) {
-            ReindexParallelizationHelper.startSlices(client, taskManager, ReindexAction.INSTANCE, clusterService.localNode().getId(),
+            BulkByScrollParallelizationHelper.startSlices(client, taskManager, ReindexAction.INSTANCE, clusterService.localNode().getId(),
                     (ParentBulkByScrollTask) task, request, listener);
         } else {
             checkRemoteWhitelist(remoteWhitelist, request.getRemoteInfo());
@@ -114,13 +120,13 @@ public class TransportReindexAction extends HandledTransportAction<ReindexReques
             validateAgainstAliases(request.getSearchRequest(), request.getDestination(), request.getRemoteInfo(),
                     indexNameExpressionResolver, autoCreateIndex, state);
             ParentTaskAssigningClient client = new ParentTaskAssigningClient(this.client, clusterService.localNode(), task);
-            new AsyncIndexBySearchAction((WorkingBulkByScrollTask) task, logger, client, threadPool, request, listener, scriptService,
-                    state).start();
+            new AsyncIndexBySearchAction((WorkingBulkByScrollTask) task, logger, client, threadPool, request, scriptService, state,
+                    listener).start();
         }
     }
 
     @Override
-    protected void doExecute(ReindexRequest request, ActionListener<BulkIndexByScrollResponse> listener) {
+    protected void doExecute(ReindexRequest request, ActionListener<BulkByScrollResponse> listener) {
         throw new UnsupportedOperationException("task required");
     }
 
@@ -231,7 +237,7 @@ public class TransportReindexAction extends HandledTransportAction<ReindexReques
      * but this makes no attempt to do any of them so it can be as simple
      * possible.
      */
-    static class AsyncIndexBySearchAction extends AbstractAsyncBulkIndexByScrollAction<ReindexRequest> {
+    static class AsyncIndexBySearchAction extends AbstractAsyncBulkByScrollAction<ReindexRequest> {
         /**
          * List of threads created by this process. Usually actions don't create threads in Elasticsearch. Instead they use the builtin
          * {@link ThreadPool}s. But reindex-from-remote uses Elasticsearch's {@link RestClient} which doesn't use the
@@ -241,9 +247,9 @@ public class TransportReindexAction extends HandledTransportAction<ReindexReques
         private List<Thread> createdThreads = emptyList();
 
         public AsyncIndexBySearchAction(WorkingBulkByScrollTask task, Logger logger, ParentTaskAssigningClient client,
-                ThreadPool threadPool, ReindexRequest request, ActionListener<BulkIndexByScrollResponse> listener,
-                ScriptService scriptService, ClusterState clusterState) {
-            super(task, logger, client, threadPool, request, listener, scriptService, clusterState);
+                ThreadPool threadPool, ReindexRequest request, ScriptService scriptService, ClusterState clusterState,
+                ActionListener<BulkByScrollResponse> listener) {
+            super(task, logger, client, threadPool, request, scriptService, clusterState, listener);
         }
 
         @Override
@@ -268,7 +274,7 @@ public class TransportReindexAction extends HandledTransportAction<ReindexReques
         }
 
         @Override
-        void finishHim(Exception failure, List<Failure> indexingFailures, List<SearchFailure> searchFailures, boolean timedOut) {
+        protected void finishHim(Exception failure, List<Failure> indexingFailures, List<SearchFailure> searchFailures, boolean timedOut) {
             super.finishHim(failure, indexingFailures, searchFailures, timedOut);
             // A little extra paranoia so we log something if we leave any threads running
             for (Thread thread : createdThreads) {
@@ -280,7 +286,7 @@ public class TransportReindexAction extends HandledTransportAction<ReindexReques
         }
 
         @Override
-        protected BiFunction<RequestWrapper<?>, ScrollableHitSource.Hit, RequestWrapper<?>> buildScriptApplier() {
+        public BiFunction<RequestWrapper<?>, ScrollableHitSource.Hit, RequestWrapper<?>> buildScriptApplier() {
             Script script = mainRequest.getScript();
             if (script != null) {
                 return new ReindexScriptApplier(task, scriptService, script, script.getParams());

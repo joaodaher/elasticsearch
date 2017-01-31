@@ -23,7 +23,6 @@ import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.join.ScoreMode;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequest;
-import org.elasticsearch.common.ParseFieldMatcher;
 import org.elasticsearch.common.compress.CompressedXContent;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -215,7 +214,7 @@ public class HasParentQueryBuilderTests extends AbstractQueryTestCase<HasParentQ
                 "   }" +
                 "}";
         XContentParser parser = createParser(JsonXContent.jsonXContent, query);
-        QueryParseContext context = createParseContext(parser, ParseFieldMatcher.EMPTY);
+        QueryParseContext context = createParseContext(parser);
         Optional<QueryBuilder> innerQueryBuilder = context.parseInnerQueryBuilder();
         assertFalse(innerQueryBuilder.isPresent());
         assertWarnings("query malformed, empty clause found at [3:17]");
@@ -233,5 +232,16 @@ public class HasParentQueryBuilderTests extends AbstractQueryTestCase<HasParentQ
         QueryShardException e = expectThrows(QueryShardException.class, () -> failingQueryBuilder.toQuery(createShardContext()));
         assertThat(e.getMessage(),
                     containsString("[" + HasParentQueryBuilder.NAME + "] query configured 'parent_type' [unmapped] is not a valid type"));
+    }
+
+    public void testIgnoreUnmappedWithRewrite() throws IOException {
+        // WrapperQueryBuilder makes sure we always rewrite
+        final HasParentQueryBuilder queryBuilder =
+            new HasParentQueryBuilder("unmapped", new WrapperQueryBuilder(new MatchAllQueryBuilder().toString()), false);
+        queryBuilder.ignoreUnmapped(true);
+        QueryShardContext queryShardContext = createShardContext();
+        Query query = queryBuilder.rewrite(queryShardContext).toQuery(queryShardContext);
+        assertThat(query, notNullValue());
+        assertThat(query, instanceOf(MatchNoDocsQuery.class));
     }
 }

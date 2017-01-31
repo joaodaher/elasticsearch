@@ -18,6 +18,7 @@
  */
 package org.elasticsearch.plugin.noop.action.bulk;
 
+import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.DocWriteResponse;
 import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkRequest;
@@ -27,7 +28,6 @@ import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.shard.ShardId;
@@ -46,7 +46,6 @@ import static org.elasticsearch.rest.RestRequest.Method.PUT;
 import static org.elasticsearch.rest.RestStatus.OK;
 
 public class RestNoopBulkAction extends BaseRestHandler {
-    @Inject
     public RestNoopBulkAction(Settings settings, RestController controller) {
         super(settings);
 
@@ -84,7 +83,7 @@ public class RestNoopBulkAction extends BaseRestHandler {
     }
 
     private static class BulkRestBuilderListener extends RestBuilderListener<BulkRequest> {
-        private final BulkItemResponse ITEM_RESPONSE = new BulkItemResponse(1, "update",
+        private final BulkItemResponse ITEM_RESPONSE = new BulkItemResponse(1, DocWriteRequest.OpType.UPDATE,
             new UpdateResponse(new ShardId("mock", "", 1), "mock_type", "1", 1L, DocWriteResponse.Result.CREATED));
 
         private final RestRequest request;
@@ -102,9 +101,7 @@ public class RestNoopBulkAction extends BaseRestHandler {
             builder.field(Fields.ERRORS, false);
             builder.startArray(Fields.ITEMS);
             for (int idx = 0; idx < bulkRequest.numberOfActions(); idx++) {
-                builder.startObject();
                 ITEM_RESPONSE.toXContent(builder, request);
-                builder.endObject();
             }
             builder.endArray();
             builder.endObject();
