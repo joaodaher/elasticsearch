@@ -123,6 +123,7 @@ public class ExceptionSerializationTests extends ESTestCase {
         final Path startPath = PathUtils.get(ElasticsearchException.class.getProtectionDomain().getCodeSource().getLocation().toURI())
                 .resolve("org").resolve("elasticsearch");
         final Set<? extends Class<?>> ignore = Sets.newHashSet(
+                org.elasticsearch.test.rest.yaml.parser.ClientYamlTestParseException.class,
                 CancellableThreadsTests.CustomException.class,
                 org.elasticsearch.rest.BytesRestResponseTests.WithHeadersException.class,
                 AbstractClientHeadersTestCase.InternalException.class);
@@ -803,7 +804,6 @@ public class ExceptionSerializationTests extends ESTestCase {
         ids.put(145, org.elasticsearch.ElasticsearchStatusException.class);
         ids.put(146, org.elasticsearch.tasks.TaskCancelledException.class);
         ids.put(147, org.elasticsearch.env.ShardLockObtainFailedException.class);
-        ids.put(148, org.elasticsearch.common.xcontent.NamedXContentRegistry.UnknownNamedObjectException.class);
 
         Map<Class<? extends ElasticsearchException>, Integer> reverse = new HashMap<>();
         for (Map.Entry<Integer, Class<? extends ElasticsearchException>> entry : ids.entrySet()) {
@@ -867,6 +867,7 @@ public class ExceptionSerializationTests extends ESTestCase {
         ShardLockObtainFailedException orig = new ShardLockObtainFailedException(shardId, "boom");
         Version version = VersionUtils.randomVersionBetween(random(), Version.V_5_0_0, Version.CURRENT);
         if (version.before(Version.V_5_0_2)) {
+            // remove this once 5_0_2 is released randomVersionBetween asserts that this version is in the constant table.
             version = Version.V_5_0_2;
         }
         ShardLockObtainFailedException ex = serialize(orig, version);

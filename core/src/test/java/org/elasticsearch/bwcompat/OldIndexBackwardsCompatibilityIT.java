@@ -23,7 +23,6 @@ import org.apache.lucene.search.Explanation;
 import org.apache.lucene.util.LuceneTestCase;
 import org.apache.lucene.util.TestUtil;
 import org.elasticsearch.Version;
-import org.elasticsearch.VersionTests;
 import org.elasticsearch.action.admin.indices.get.GetIndexResponse;
 import org.elasticsearch.action.admin.indices.recovery.RecoveryResponse;
 import org.elasticsearch.action.admin.indices.segments.IndexSegments;
@@ -37,7 +36,6 @@ import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.cluster.routing.RecoverySource;
-import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.io.FileSystemUtils;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
@@ -56,8 +54,6 @@ import org.elasticsearch.indices.recovery.RecoveryState;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.search.SearchHit;
-import org.elasticsearch.search.SearchHitField;
-import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.aggregations.AggregationBuilders;
 import org.elasticsearch.search.aggregations.bucket.histogram.Histogram;
 import org.elasticsearch.search.aggregations.bucket.terms.Terms;
@@ -96,6 +92,7 @@ import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 public class OldIndexBackwardsCompatibilityIT extends ESIntegTestCase {
     // TODO: test for proper exception on unsupported indexes (maybe via separate test?)
     // We have a 0.20.6.zip etc for this.
+
 
     @Override
     protected Collection<Class<? extends Plugin>> nodePlugins() {
@@ -182,10 +179,10 @@ public class OldIndexBackwardsCompatibilityIT extends ESIntegTestCase {
 
     public void testAllVersionsTested() throws Exception {
         SortedSet<String> expectedVersions = new TreeSet<>();
-        for (Version v : VersionUtils.allReleasedVersions()) {
+        for (Version v : VersionUtils.allVersions()) {
             if (VersionUtils.isSnapshot(v)) continue;  // snapshots are unreleased, so there is no backcompat yet
             if (v.isRelease() == false) continue; // no guarantees for prereleases
-            if (v.before(Version.CURRENT.minimumIndexCompatibilityVersion())) continue; // we can only support one major version backward
+            if (v.onOrBefore(Version.V_2_0_0_beta1)) continue; // we can only test back one major lucene version
             if (v.equals(Version.CURRENT)) continue; // the current version is always compatible with itself
             expectedVersions.add("index-" + v.toString() + ".zip");
         }
@@ -244,7 +241,6 @@ public class OldIndexBackwardsCompatibilityIT extends ESIntegTestCase {
         assertDeleteByQueryWorked(indexName, version);
         assertPositionIncrementGapDefaults(indexName, version);
         assertAliasWithBadName(indexName, version);
-        assertStoredBinaryFields(indexName, version);
         unloadIndex(indexName);
     }
 
@@ -435,9 +431,7 @@ public class OldIndexBackwardsCompatibilityIT extends ESIntegTestCase {
      * search-able though.
      */
     void assertAliasWithBadName(String indexName, Version version) throws Exception {
-        Version v510Unreleased = Version.fromId(5010099);
-        VersionTests.assertUnknownVersion(v510Unreleased);
-        if (version.onOrAfter(v510Unreleased)) {
+        if (version.onOrAfter(Version.V_5_1_1)) {
             return;
         }
         // We can read from the alias just like we can read from the index.
@@ -449,25 +443,6 @@ public class OldIndexBackwardsCompatibilityIT extends ESIntegTestCase {
         // We can remove the alias.
         assertAcked(client().admin().indices().prepareAliases().removeAlias(indexName, aliasName).get());
         assertFalse(client().admin().indices().prepareAliasesExist(aliasName).get().exists());
-    }
-
-    /**
-     * Make sure we can load stored binary fields.
-     */
-    void assertStoredBinaryFields(String indexName, Version version) throws Exception {
-        SearchRequestBuilder builder = client().prepareSearch(indexName);
-        builder.setQuery(QueryBuilders.matchAllQuery());
-        builder.setSize(100);
-        builder.addStoredField("binary");
-        SearchHits hits = builder.get().getHits();
-        assertEquals(100, hits.hits().length);
-        for(SearchHit hit : hits) {
-            SearchHitField field = hit.field("binary");
-            assertNotNull(field);
-            Object value = field.value();
-            assertTrue(value instanceof BytesArray);
-            assertEquals(16, ((BytesArray) value).length());
-        }
     }
 
     private Path getNodeDir(String indexFile) throws IOException {
@@ -530,7 +505,7 @@ public class OldIndexBackwardsCompatibilityIT extends ESIntegTestCase {
             String indexName = indexFile.replace(".zip", "").toLowerCase(Locale.ROOT).replace("unsupported-", "index-");
             Path nodeDir = getNodeDir(indexFile);
             logger.info("Parsing cluster state files from index [{}]", indexName);
-            final MetaData metaData = globalFormat.loadLatestState(logger, xContentRegistry(), nodeDir);
+            final MetaData metaData = globalFormat.loadLatestState(logger, nodeDir);
             assertNotNull(metaData);
 
             final Version version = Version.fromString(indexName.substring("index-".length()));
@@ -541,7 +516,7 @@ public class OldIndexBackwardsCompatibilityIT extends ESIntegTestCase {
                 dataDir = nodeDir.getParent();
             }
             final Path indexDir = getIndexDir(logger, indexName, indexFile, dataDir);
-            assertNotNull(indexFormat.loadLatestState(logger, xContentRegistry(), indexDir));
+            assertNotNull(indexFormat.loadLatestState(logger, indexDir));
         }
     }
 

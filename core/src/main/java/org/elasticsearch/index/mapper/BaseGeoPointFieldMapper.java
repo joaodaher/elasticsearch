@@ -20,16 +20,19 @@
 package org.elasticsearch.index.mapper;
 
 import org.apache.lucene.document.Field;
+import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexOptions;
-import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.Query;
-import org.elasticsearch.common.geo.GeoHashUtils;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LegacyNumericUtils;
-import org.elasticsearch.Version;
 import org.elasticsearch.ElasticsearchParseException;
+import org.elasticsearch.Version;
+import org.elasticsearch.action.fieldstats.FieldStats;
 import org.elasticsearch.common.Explicit;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.Iterators;
+import org.elasticsearch.common.geo.GeoHashUtils;
 import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.common.geo.GeoUtils;
 import org.elasticsearch.common.logging.DeprecationLogger;
@@ -279,6 +282,20 @@ public abstract class BaseGeoPointFieldMapper extends FieldMapper implements Arr
         public String typeName() {
             return CONTENT_TYPE;
         }
+
+        @Override
+        public FieldStats stats(IndexReader reader) throws IOException {
+            int maxDoc = reader.maxDoc();
+            FieldInfo fi = org.apache.lucene.index.MultiFields.getMergedFieldInfos(reader).fieldInfo(name());
+            if (fi == null) {
+                return null;
+            }
+            /**
+             * we don't have a specific type for geo_shape so we use an empty {@link FieldStats.Text}.
+             * TODO: we should maybe support a new type that knows how to (de)encode the min/max information
+             */
+            return new FieldStats.Text(maxDoc, -1, -1, -1, isSearchable(), isAggregatable(), new BytesRef(), new BytesRef());
+        }
     }
 
     public static class LegacyGeoPointFieldType extends GeoPointFieldType {
@@ -467,7 +484,7 @@ public abstract class BaseGeoPointFieldMapper extends FieldMapper implements Arr
     }
 
     @Override
-    protected void parseCreateField(ParseContext context, List<IndexableField> fields) throws IOException {
+    protected void parseCreateField(ParseContext context, List<Field> fields) throws IOException {
         throw new UnsupportedOperationException("Parsing is implemented in parse(), this method should NEVER be called");
     }
 

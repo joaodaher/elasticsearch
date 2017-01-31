@@ -28,7 +28,9 @@ import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.ClusterStateListener;
 import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.action.shard.ShardStateAction;
 import org.elasticsearch.cluster.block.ClusterBlock;
@@ -80,8 +82,8 @@ import org.elasticsearch.test.disruption.SingleNodeDisruption;
 import org.elasticsearch.test.disruption.SlowClusterStateProcessing;
 import org.elasticsearch.test.junit.annotations.TestLogging;
 import org.elasticsearch.test.transport.MockTransportService;
-import org.elasticsearch.transport.ConnectionProfile;
 import org.elasticsearch.transport.TcpTransport;
+import org.elasticsearch.transport.TransportException;
 import org.elasticsearch.transport.TransportRequest;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
@@ -684,23 +686,29 @@ public class DiscoveryWithServiceDisruptionsIT extends ESIntegTestCase {
             String>>>());
         for (final String node : majoritySide) {
             masters.put(node, new ArrayList<Tuple<String, String>>());
-            internalCluster().getInstance(ClusterService.class, node).addListener(event -> {
-                DiscoveryNode previousMaster = event.previousState().nodes().getMasterNode();
-                DiscoveryNode currentMaster = event.state().nodes().getMasterNode();
-                if (!Objects.equals(previousMaster, currentMaster)) {
-                    logger.info("node {} received new cluster state: {} \n and had previous cluster state: {}", node, event.state(),
-                        event.previousState());
-                    String previousMasterNodeName = previousMaster != null ? previousMaster.getName() : null;
-                    String currentMasterNodeName = currentMaster != null ? currentMaster.getName() : null;
-                    masters.get(node).add(new Tuple<>(previousMasterNodeName, currentMasterNodeName));
+            internalCluster().getInstance(ClusterService.class, node).add(new ClusterStateListener() {
+                @Override
+                public void clusterChanged(ClusterChangedEvent event) {
+                    DiscoveryNode previousMaster = event.previousState().nodes().getMasterNode();
+                    DiscoveryNode currentMaster = event.state().nodes().getMasterNode();
+                    if (!Objects.equals(previousMaster, currentMaster)) {
+                        logger.info("node {} received new cluster state: {} \n and had previous cluster state: {}", node, event.state(),
+                            event.previousState());
+                        String previousMasterNodeName = previousMaster != null ? previousMaster.getName() : null;
+                        String currentMasterNodeName = currentMaster != null ? currentMaster.getName() : null;
+                        masters.get(node).add(new Tuple<>(previousMasterNodeName, currentMasterNodeName));
+                    }
                 }
             });
         }
 
         final CountDownLatch oldMasterNodeSteppedDown = new CountDownLatch(1);
-        internalCluster().getInstance(ClusterService.class, oldMasterNode).addListener(event -> {
-            if (event.state().nodes().getMasterNodeId() == null) {
-                oldMasterNodeSteppedDown.countDown();
+        internalCluster().getInstance(ClusterService.class, oldMasterNode).add(new ClusterStateListener() {
+            @Override
+            public void clusterChanged(ClusterChangedEvent event) {
+                if (event.state().nodes().getMasterNodeId() == null) {
+                    oldMasterNodeSteppedDown.countDown();
+                }
             }
         });
 
@@ -944,19 +952,13 @@ public class DiscoveryWithServiceDisruptionsIT extends ESIntegTestCase {
         nonMasterTransportService.addDelegate(masterTranspotService, new MockTransportService.DelegateTransport(nonMasterTransportService
             .original()) {
             @Override
-            protected void sendRequest(Connection connection, long requestId, String action, TransportRequest request,
-                                       TransportRequestOptions options) throws IOException {
+            public void sendRequest(DiscoveryNode node, long requestId, String action, TransportRequest request, TransportRequestOptions
+                options) throws IOException, TransportException {
                 if (action.equals(MembershipAction.DISCOVERY_JOIN_ACTION_NAME)) {
                     countDownLatch.countDown();
                 }
-                super.sendRequest(connection, requestId, action, request, options);
+                super.sendRequest(node, requestId, action, request, options);
             }
-
-            @Override
-            public Connection openConnection(DiscoveryNode node, ConnectionProfile profile) throws IOException {
-                return super.openConnection(node, profile);
-            }
-
         });
 
         countDownLatch.await();
@@ -995,11 +997,7 @@ public class DiscoveryWithServiceDisruptionsIT extends ESIntegTestCase {
 
         String isolatedNode = randomBoolean() ? masterNode : nonMasterNode;
         TwoPartitions partitions = isolateNode(isolatedNode);
-        // we cannot use the NetworkUnresponsive disruption type here as it will swallow the "shard failed" request, calling neither
-        // onSuccess nor onFailure on the provided listener.
-        NetworkLinkDisruptionType disruptionType = new NetworkDisconnect();
-        NetworkDisruption networkDisruption = new NetworkDisruption(partitions, disruptionType);
-        setDisruptionScheme(networkDisruption);
+        NetworkDisruption networkDisruption = addRandomDisruptionType(partitions);
         networkDisruption.startDisrupting();
 
         service.localShardFailed(failedShard, "simulated", new CorruptIndexException("simulated", (String) null), new
@@ -1189,7 +1187,8 @@ public class DiscoveryWithServiceDisruptionsIT extends ESIntegTestCase {
         assertBusy(() -> {
             for (String masterNode : allMasterEligibleNodes) {
                 final ClusterState masterState = internalCluster().clusterService(masterNode).state();
-                assertTrue("index not deleted on " + masterNode, masterState.metaData().hasIndex(idxName) == false);
+                assertTrue("index not deleted on " + masterNode, masterState.metaData().hasIndex(idxName) == false &&
+                                                                 masterState.status() == ClusterState.ClusterStateStatus.APPLIED);
             }
         });
         internalCluster().restartNode(masterNode1, InternalTestCluster.EMPTY_CALLBACK);
