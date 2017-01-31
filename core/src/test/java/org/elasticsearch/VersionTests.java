@@ -22,16 +22,15 @@ package org.elasticsearch;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.transport.InetSocketTransportAddress;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.test.VersionUtils;
 import org.hamcrest.Matchers;
 
 import java.lang.reflect.Modifier;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 import static org.elasticsearch.Version.V_2_2_0;
 import static org.elasticsearch.Version.V_5_0_0_alpha1;
@@ -64,37 +63,7 @@ public class VersionTests extends ESTestCase {
         assertTrue(Version.fromString("5.0.0").onOrAfter(Version.fromString("5.0.0-beta2")));
         assertTrue(Version.fromString("5.0.0-rc1").onOrAfter(Version.fromString("5.0.0-beta24")));
         assertTrue(Version.fromString("5.0.0-alpha24").before(Version.fromString("5.0.0-beta0")));
-    }
 
-    public void testMin() {
-        assertEquals(VersionUtils.getPreviousVersion(), Version.min(Version.CURRENT, VersionUtils.getPreviousVersion()));
-        assertEquals(Version.fromString("1.0.1"), Version.min(Version.fromString("1.0.1"), Version.CURRENT));
-        Version version = VersionUtils.randomVersion(random());
-        Version version1 = VersionUtils.randomVersion(random());
-        if (version.id <= version1.id) {
-            assertEquals(version, Version.min(version1, version));
-        } else {
-            assertEquals(version1, Version.min(version1, version));
-        }
-    }
-
-    public void testMax() {
-        assertEquals(Version.CURRENT, Version.max(Version.CURRENT, VersionUtils.getPreviousVersion()));
-        assertEquals(Version.CURRENT, Version.max(Version.fromString("1.0.1"), Version.CURRENT));
-        Version version = VersionUtils.randomVersion(random());
-        Version version1 = VersionUtils.randomVersion(random());
-        if (version.id >= version1.id) {
-            assertEquals(version, Version.max(version1, version));
-        } else {
-            assertEquals(version1, Version.max(version1, version));
-        }
-    }
-
-    public void testMinimumIndexCompatibilityVersion() {
-        assertEquals(Version.V_5_0_0, Version.fromString("6.0.0").minimumIndexCompatibilityVersion());
-        assertEquals(Version.V_2_0_0_beta1, Version.V_5_0_0.minimumIndexCompatibilityVersion());
-        assertEquals(Version.V_2_0_0_beta1, Version.V_5_1_1_UNRELEASED.minimumIndexCompatibilityVersion());
-        assertEquals(Version.V_2_0_0_beta1, Version.V_5_0_0_alpha1.minimumIndexCompatibilityVersion());
     }
 
     public void testVersionConstantPresent() {
@@ -224,7 +193,7 @@ public class VersionTests extends ESTestCase {
 
     public void testParseLenient() {
         // note this is just a silly sanity check, we test it in lucene
-        for (Version version : VersionUtils.allReleasedVersions()) {
+        for (Version version : VersionUtils.allVersions()) {
             org.apache.lucene.util.Version luceneVersion = version.luceneVersion;
             String string = luceneVersion.toString().toUpperCase(Locale.ROOT)
                     .replaceFirst("^LUCENE_(\\d+)_(\\d+)$", "$1.$2");
@@ -233,27 +202,20 @@ public class VersionTests extends ESTestCase {
     }
 
     public void testAllVersionsMatchId() throws Exception {
-        final Set<Version> releasedVersions = new HashSet<>(VersionUtils.allReleasedVersions());
-        final Set<Version> unreleasedVersions = new HashSet<>(VersionUtils.allUnreleasedVersions());
         Map<String, Version> maxBranchVersions = new HashMap<>();
         for (java.lang.reflect.Field field : Version.class.getFields()) {
-            if (field.getName().matches("_ID(_UNRELEASED)?")) {
+            if (field.getName().endsWith("_ID")) {
                 assertTrue(field.getName() + " should be static", Modifier.isStatic(field.getModifiers()));
                 assertTrue(field.getName() + " should be final", Modifier.isFinal(field.getModifiers()));
                 int versionId = (Integer)field.get(Version.class);
 
-                String constantName = field.getName().substring(0, field.getName().indexOf("_ID"));
+                String constantName = field.getName().substring(0, field.getName().length() - 3);
                 java.lang.reflect.Field versionConstant = Version.class.getField(constantName);
                 assertTrue(constantName + " should be static", Modifier.isStatic(versionConstant.getModifiers()));
                 assertTrue(constantName + " should be final", Modifier.isFinal(versionConstant.getModifiers()));
 
-                Version v = (Version) versionConstant.get(null);
-                logger.debug("Checking {}", v);
-                if (field.getName().endsWith("_UNRELEASED")) {
-                    assertTrue(unreleasedVersions.contains(v));
-                } else {
-                    assertTrue(releasedVersions.contains(v));
-                }
+                Version v = (Version) versionConstant.get(Version.class);
+                logger.info("Checking {}", v);
                 assertEquals("Version id " + field.getName() + " does not point to " + constantName, v, Version.fromId(versionId));
                 assertEquals("Version " + constantName + " does not have correct id", versionId, v.id);
                 if (v.major >= 2) {
@@ -286,8 +248,8 @@ public class VersionTests extends ESTestCase {
 
     // this test ensures we never bump the lucene version in a bugfix release
     public void testLuceneVersionIsSameOnMinorRelease() {
-        for (Version version : VersionUtils.allReleasedVersions()) {
-            for (Version other : VersionUtils.allReleasedVersions()) {
+        for (Version version : VersionUtils.allVersions()) {
+            for (Version other : VersionUtils.allVersions()) {
                 if (other.onOrAfter(version)) {
                     assertTrue("lucene versions must be "  + other + " >= " + version,
                         other.luceneVersion.onOrAfter(version.luceneVersion));
@@ -302,24 +264,18 @@ public class VersionTests extends ESTestCase {
         }
     }
 
+    private static final Version V_20_0_0_UNRELEASED = new Version(20000099, Version.CURRENT.luceneVersion);
+
+    // see comment in Version.java about this test
+    public void testUnknownVersions() {
+        assertUnknownVersion(V_20_0_0_UNRELEASED);
+        // once we release 5.0.3 and it's added to Version.java we need to remove this constant
+        assertUnknownVersion(InetSocketTransportAddress.V_5_0_3_UNRELEASED);
+        expectThrows(AssertionError.class, () -> assertUnknownVersion(Version.CURRENT));
+    }
+
     public static void assertUnknownVersion(Version version) {
-        assertFalse("Version " + version + " has been released don't use a new instance of this version",
-            VersionUtils.allReleasedVersions().contains(version));
+        assertFalse("Version " + version + " has been releaed don't use a new instance of this version",
+            VersionUtils.allVersions().contains(version));
     }
-
-    public void testIsCompatible() {
-        assertTrue(isCompatible(Version.CURRENT, Version.CURRENT.minimumCompatibilityVersion()));
-        assertTrue(isCompatible(Version.CURRENT, Version.fromString("6.0.0")));
-        assertFalse("only compatible with the latest minor",
-            isCompatible(VersionUtils.getPreviousVersion(), Version.fromString("6.0.0")));
-        assertFalse(isCompatible(Version.V_2_0_0, Version.fromString("6.0.0")));
-        assertFalse(isCompatible(Version.V_2_0_0, Version.V_5_0_0));
-    }
-
-    public boolean isCompatible(Version left, Version right) {
-        boolean result = left.isCompatible(right);
-        assert result == right.isCompatible(left);
-        return result;
-    }
-
 }

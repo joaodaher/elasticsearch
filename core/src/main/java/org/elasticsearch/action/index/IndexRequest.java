@@ -22,8 +22,7 @@ package org.elasticsearch.action.index;
 import org.elasticsearch.ElasticsearchGenerationException;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionRequestValidationException;
-import org.elasticsearch.action.CompositeIndicesRequest;
-import org.elasticsearch.action.DocWriteRequest;
+import org.elasticsearch.action.DocumentRequest;
 import org.elasticsearch.action.RoutingMissingException;
 import org.elasticsearch.action.TimestampParsingException;
 import org.elasticsearch.action.support.replication.ReplicatedWriteRequest;
@@ -71,7 +70,68 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
  * @see org.elasticsearch.client.Requests#indexRequest(String)
  * @see org.elasticsearch.client.Client#index(IndexRequest)
  */
-public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implements DocWriteRequest<IndexRequest>, CompositeIndicesRequest {
+public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implements DocumentRequest<IndexRequest> {
+
+    /**
+     * Operation type controls if the type of the index operation.
+     */
+    public enum OpType {
+        /**
+         * Index the source. If there an existing document with the id, it will
+         * be replaced.
+         */
+        INDEX((byte) 0),
+        /**
+         * Creates the resource. Simply adds it to the index, if there is an existing
+         * document with the id, then it won't be removed.
+         */
+        CREATE((byte) 1);
+
+        private final byte id;
+        private final String lowercase;
+
+        OpType(byte id) {
+            this.id = id;
+            this.lowercase = this.toString().toLowerCase(Locale.ENGLISH);
+        }
+
+        /**
+         * The internal representation of the operation type.
+         */
+        public byte id() {
+            return id;
+        }
+
+        public String lowercase() {
+            return this.lowercase;
+        }
+
+        /**
+         * Constructs the operation type from its internal representation.
+         */
+        public static OpType fromId(byte id) {
+            if (id == 0) {
+                return INDEX;
+            } else if (id == 1) {
+                return CREATE;
+            } else {
+                throw new IllegalArgumentException("No type match for [" + id + "]");
+            }
+        }
+
+        public static OpType fromString(String sOpType) {
+            String lowersOpType = sOpType.toLowerCase(Locale.ROOT);
+            switch (lowersOpType) {
+                case "create":
+                    return OpType.CREATE;
+                case "index":
+                    return OpType.INDEX;
+                default:
+                    throw new IllegalArgumentException("opType [" + sOpType + "] not allowed, either [index] or [create] are allowed");
+            }
+        }
+
+    }
 
     private String type;
     private String id;
@@ -393,14 +453,46 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
         return this;
     }
 
-    /**
-     * Sets the content source to index.
-     * <p>
-     * <b>Note: the number of objects passed to this method must be an even
-     * number. Also the first argument in each pair (the field name) must have a
-     * valid String representation.</b>
-     * </p>
-     */
+    public IndexRequest source(String field1, Object value1) {
+        try {
+            XContentBuilder builder = XContentFactory.contentBuilder(contentType);
+            builder.startObject().field(field1, value1).endObject();
+            return source(builder);
+        } catch (IOException e) {
+            throw new ElasticsearchGenerationException("Failed to generate", e);
+        }
+    }
+
+    public IndexRequest source(String field1, Object value1, String field2, Object value2) {
+        try {
+            XContentBuilder builder = XContentFactory.contentBuilder(contentType);
+            builder.startObject().field(field1, value1).field(field2, value2).endObject();
+            return source(builder);
+        } catch (IOException e) {
+            throw new ElasticsearchGenerationException("Failed to generate", e);
+        }
+    }
+
+    public IndexRequest source(String field1, Object value1, String field2, Object value2, String field3, Object value3) {
+        try {
+            XContentBuilder builder = XContentFactory.contentBuilder(contentType);
+            builder.startObject().field(field1, value1).field(field2, value2).field(field3, value3).endObject();
+            return source(builder);
+        } catch (IOException e) {
+            throw new ElasticsearchGenerationException("Failed to generate", e);
+        }
+    }
+
+    public IndexRequest source(String field1, Object value1, String field2, Object value2, String field3, Object value3, String field4, Object value4) {
+        try {
+            XContentBuilder builder = XContentFactory.contentBuilder(contentType);
+            builder.startObject().field(field1, value1).field(field2, value2).field(field3, value3).field(field4, value4).endObject();
+            return source(builder);
+        } catch (IOException e) {
+            throw new ElasticsearchGenerationException("Failed to generate", e);
+        }
+    }
+
     public IndexRequest source(Object... source) {
         if (source.length % 2 != 0) {
             throw new IllegalArgumentException("The number of object passed must be even but was [" + source.length + "]");
@@ -453,27 +545,16 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
      * Sets the type of operation to perform.
      */
     public IndexRequest opType(OpType opType) {
-        if (opType != OpType.CREATE && opType != OpType.INDEX) {
-            throw new IllegalArgumentException("opType must be 'create' or 'index', found: [" + opType + "]");
-        }
         this.opType = opType;
         return this;
     }
 
     /**
-     * Sets a string representation of the {@link #opType(OpType)}. Can
+     * Sets a string representation of the {@link #opType(org.elasticsearch.action.index.IndexRequest.OpType)}. Can
      * be either "index" or "create".
      */
     public IndexRequest opType(String opType) {
-        String op = opType.toLowerCase(Locale.ROOT);
-        if (op.equals("create")) {
-            opType(OpType.CREATE);
-        } else if (op.equals("index")) {
-            opType(OpType.INDEX);
-        } else {
-            throw new IllegalArgumentException("opType must be 'create' or 'index', found: [" + opType + "]");
-        }
-        return this;
+        return opType(OpType.fromString(opType));
     }
 
 
@@ -488,12 +569,17 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
         }
     }
 
-    @Override
+    /**
+     * The type of operation to perform.
+     */
     public OpType opType() {
         return this.opType;
     }
 
-    @Override
+    /**
+     * Sets the version, which will cause the index operation to only be performed if a matching
+     * version exists and no changes happened on the doc since then.
+     */
     public IndexRequest version(long version) {
         this.version = version;
         return this;
@@ -503,7 +589,6 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
      * Returns stored version. If currently stored version is {@link Versions#MATCH_ANY} and
      * opType is {@link OpType#CREATE}, returns {@link Versions#MATCH_DELETED}.
      */
-    @Override
     public long version() {
         return resolveVersionDefaults();
     }
@@ -519,13 +604,14 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
         }
     }
 
-    @Override
+    /**
+     * Sets the versioning type. Defaults to {@link VersionType#INTERNAL}.
+     */
     public IndexRequest versionType(VersionType versionType) {
         this.versionType = versionType;
         return this;
     }
 
-    @Override
     public VersionType versionType() {
         return this.versionType;
     }
@@ -617,9 +703,9 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
         out.writeOptionalString(timestamp);
         out.writeOptionalWriteable(ttl);
         out.writeBytesReference(source);
-        out.writeByte(opType.getId());
+        out.writeByte(opType.id());
         // ES versions below 5.1.2 don't know about resolveVersionDefaults but resolve the version eagerly (which messes with validation).
-        if (out.getVersion().before(Version.V_5_1_2_UNRELEASED)) {
+        if (out.getVersion().before(Version.V_5_1_2)) {
             out.writeLong(resolveVersionDefaults());
         } else {
             out.writeLong(version);

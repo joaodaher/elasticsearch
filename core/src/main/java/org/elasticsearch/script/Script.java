@@ -21,18 +21,21 @@ package org.elasticsearch.script;
 
 import org.elasticsearch.Version;
 import org.elasticsearch.common.ParseField;
+import org.elasticsearch.common.ParseFieldMatcher;
+import org.elasticsearch.common.ParseFieldMatcherSupplier;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.xcontent.ObjectParser;
 import org.elasticsearch.common.xcontent.ObjectParser.ValueType;
-import org.elasticsearch.common.xcontent.ToXContentObject;
+import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentParser.Token;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.query.QueryParseContext;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -46,9 +49,7 @@ import java.util.Objects;
  * compile and execute a script from the {@link ScriptService}
  * based on the {@link ScriptType}.
  */
-public final class Script implements ToXContentObject, Writeable {
-
-    public static final Version V_5_1_0_UNRELEASED = Version.fromId(5010099);
+public final class Script implements ToXContent, Writeable {
 
     /**
      * The name of the of the default scripting language.
@@ -210,7 +211,7 @@ public final class Script implements ToXContentObject, Writeable {
         }
     }
 
-    private static final ObjectParser<Builder, Void> PARSER = new ObjectParser<>("script", Builder::new);
+    private static final ObjectParser<Builder, ParseFieldMatcherSupplier> PARSER = new ObjectParser<>("script", Builder::new);
 
     static {
         // Defines the fields necessary to parse a Script as XContent using an ObjectParser.
@@ -223,11 +224,19 @@ public final class Script implements ToXContentObject, Writeable {
     }
 
     /**
-     * Convenience method to call {@link Script#parse(XContentParser, String)}
+     * Convenience method to call {@link Script#parse(XContentParser, ParseFieldMatcher, String)}
      * using the default scripting language.
      */
-    public static Script parse(XContentParser parser) throws IOException {
-        return parse(parser, DEFAULT_SCRIPT_LANG);
+    public static Script parse(XContentParser parser, ParseFieldMatcher matcher) throws IOException {
+        return parse(parser, matcher, DEFAULT_SCRIPT_LANG);
+    }
+
+    /**
+     * Convenience method to call {@link Script#parse(XContentParser, ParseFieldMatcher, String)} using the
+     * {@link ParseFieldMatcher} and scripting language provided by the {@link QueryParseContext}.
+     */
+    public static Script parse(XContentParser parser, QueryParseContext context) throws IOException {
+        return parse(parser, context.getParseFieldMatcher(), context.getDefaultScriptLanguage());
     }
 
     /**
@@ -291,12 +300,13 @@ public final class Script implements ToXContentObject, Writeable {
      * }
      *
      * @param parser       The {@link XContentParser} to be used.
+     * @param matcher      The {@link ParseFieldMatcher} to be used.
      * @param defaultLang  The default language to use if no language is specified.  The default language isn't necessarily
      *                     the one defined by {@link Script#DEFAULT_SCRIPT_LANG} due to backwards compatiblity requirements
      *                     related to stored queries using previously default languauges.
      * @return             The parsed {@link Script}.
      */
-    public static Script parse(XContentParser parser, String defaultLang) throws IOException {
+    public static Script parse(XContentParser parser, ParseFieldMatcher matcher, String defaultLang) throws IOException {
         Objects.requireNonNull(defaultLang);
 
         Token token = parser.currentToken();
@@ -309,7 +319,7 @@ public final class Script implements ToXContentObject, Writeable {
             return new Script(ScriptType.INLINE, defaultLang, parser.text(), Collections.emptyMap());
         }
 
-        return PARSER.apply(parser, null).build(defaultLang);
+        return PARSER.apply(parser, () -> matcher).build(defaultLang);
     }
 
     private final ScriptType type;
@@ -367,7 +377,7 @@ public final class Script implements ToXContentObject, Writeable {
         // Version 5.1+ requires all Script members to be non-null and supports the potential
         // for more options than just XContentType.  Reorders the read in contents to be in
         // same order as the constructor.
-        if (in.getVersion().onOrAfter(Version.V_5_1_1_UNRELEASED)) {
+        if (in.getVersion().onOrAfter(Version.V_5_1_1)) {
             this.type = ScriptType.readFrom(in);
             this.lang = in.readString();
             this.idOrCode = in.readString();
@@ -419,7 +429,7 @@ public final class Script implements ToXContentObject, Writeable {
         // Version 5.1+ requires all Script members to be non-null and supports the potential
         // for more options than just XContentType.  Reorders the written out contents to be in
         // same order as the constructor.
-        if (out.getVersion().onOrAfter(Version.V_5_1_1_UNRELEASED)) {
+        if (out.getVersion().onOrAfter(Version.V_5_1_1)) {
             type.writeTo(out);
             out.writeString(lang);
             out.writeString(idOrCode);

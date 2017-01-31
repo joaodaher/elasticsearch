@@ -29,9 +29,10 @@ import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryParseContext;
 import org.elasticsearch.search.aggregations.AbstractAggregationBuilder;
 import org.elasticsearch.search.aggregations.AggregatorFactories.Builder;
+import org.elasticsearch.search.aggregations.InternalAggregation.Type;
 import org.elasticsearch.search.aggregations.AggregatorFactory;
 import org.elasticsearch.search.aggregations.bucket.filters.FiltersAggregator.KeyedFilter;
-import org.elasticsearch.search.internal.SearchContext;
+import org.elasticsearch.search.aggregations.support.AggregationContext;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -44,6 +45,7 @@ import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
 
 public class FiltersAggregationBuilder extends AbstractAggregationBuilder<FiltersAggregationBuilder> {
     public static final String NAME = "filters";
+    private static final Type TYPE = new Type(NAME);
 
     private static final ParseField FILTERS_FIELD = new ParseField("filters");
     private static final ParseField OTHER_BUCKET_FIELD = new ParseField("other_bucket");
@@ -65,7 +67,7 @@ public class FiltersAggregationBuilder extends AbstractAggregationBuilder<Filter
     }
 
     private FiltersAggregationBuilder(String name, List<KeyedFilter> filters) {
-        super(name);
+        super(name, TYPE);
         // internally we want to have a fixed order of filters, regardless of the order of the filters in the request
         this.filters = new ArrayList<>(filters);
         Collections.sort(this.filters, (KeyedFilter kf1, KeyedFilter kf2) -> kf1.key().compareTo(kf2.key()));
@@ -79,7 +81,7 @@ public class FiltersAggregationBuilder extends AbstractAggregationBuilder<Filter
      *            the filters to use with this aggregation
      */
     public FiltersAggregationBuilder(String name, QueryBuilder... filters) {
-        super(name);
+        super(name, TYPE);
         List<KeyedFilter> keyedFilters = new ArrayList<>(filters.length);
         for (int i = 0; i < filters.length; i++) {
             keyedFilters.add(new KeyedFilter(String.valueOf(i), filters[i]));
@@ -92,7 +94,7 @@ public class FiltersAggregationBuilder extends AbstractAggregationBuilder<Filter
      * Read from a stream.
      */
     public FiltersAggregationBuilder(StreamInput in) throws IOException {
-        super(in);
+        super(in, TYPE);
         keyed = in.readBoolean();
         int filtersSize = in.readVInt();
         filters = new ArrayList<>(filtersSize);
@@ -169,14 +171,14 @@ public class FiltersAggregationBuilder extends AbstractAggregationBuilder<Filter
     }
 
     @Override
-    protected AggregatorFactory<?> doBuild(SearchContext context, AggregatorFactory<?> parent, Builder subFactoriesBuilder)
+    protected AggregatorFactory<?> doBuild(AggregationContext context, AggregatorFactory<?> parent, Builder subFactoriesBuilder)
             throws IOException {
         List<KeyedFilter> rewrittenFilters = new ArrayList<>();
         for(KeyedFilter kf : filters) {
-            rewrittenFilters.add(new KeyedFilter(kf.key(), QueryBuilder.rewriteQuery(kf.filter(),
-                    context.getQueryShardContext())));
+            rewrittenFilters.add(new KeyedFilter(kf.key(), QueryBuilder.rewriteQuery(kf.filter(), 
+                    context.searchContext().getQueryShardContext())));
         }
-        return new FiltersAggregatorFactory(name, rewrittenFilters, keyed, otherBucket, otherBucketKey, context, parent,
+        return new FiltersAggregatorFactory(name, type, rewrittenFilters, keyed, otherBucket, otherBucketKey, context, parent,
                 subFactoriesBuilder, metaData);
     }
 
@@ -217,21 +219,21 @@ public class FiltersAggregationBuilder extends AbstractAggregationBuilder<Filter
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
             } else if (token == XContentParser.Token.VALUE_BOOLEAN) {
-                if (OTHER_BUCKET_FIELD.match(currentFieldName)) {
+                if (context.getParseFieldMatcher().match(currentFieldName, OTHER_BUCKET_FIELD)) {
                     otherBucket = parser.booleanValue();
                 } else {
                     throw new ParsingException(parser.getTokenLocation(),
                             "Unknown key for a " + token + " in [" + aggregationName + "]: [" + currentFieldName + "].");
                 }
             } else if (token == XContentParser.Token.VALUE_STRING) {
-                if (OTHER_BUCKET_KEY_FIELD.match(currentFieldName)) {
+                if (context.getParseFieldMatcher().match(currentFieldName, OTHER_BUCKET_KEY_FIELD)) {
                     otherBucketKey = parser.text();
                 } else {
                     throw new ParsingException(parser.getTokenLocation(),
                             "Unknown key for a " + token + " in [" + aggregationName + "]: [" + currentFieldName + "].");
                 }
             } else if (token == XContentParser.Token.START_OBJECT) {
-                if (FILTERS_FIELD.match(currentFieldName)) {
+                if (context.getParseFieldMatcher().match(currentFieldName, FILTERS_FIELD)) {
                     keyedFilters = new ArrayList<>();
                     String key = null;
                     while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
@@ -247,7 +249,7 @@ public class FiltersAggregationBuilder extends AbstractAggregationBuilder<Filter
                             "Unknown key for a " + token + " in [" + aggregationName + "]: [" + currentFieldName + "].");
                 }
             } else if (token == XContentParser.Token.START_ARRAY) {
-                if (FILTERS_FIELD.match(currentFieldName)) {
+                if (context.getParseFieldMatcher().match(currentFieldName, FILTERS_FIELD)) {
                     nonKeyedFilters = new ArrayList<>();
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
                         QueryBuilder filter = context.parseInnerQueryBuilder().orElse(matchAllQuery());
@@ -300,7 +302,7 @@ public class FiltersAggregationBuilder extends AbstractAggregationBuilder<Filter
     }
 
     @Override
-    public String getType() {
+    public String getWriteableName() {
         return NAME;
     }
 }

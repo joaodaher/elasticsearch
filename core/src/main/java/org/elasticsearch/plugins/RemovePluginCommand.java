@@ -19,28 +19,32 @@
 
 package org.elasticsearch.plugins;
 
+import joptsimple.OptionSet;
+import joptsimple.OptionSpec;
+
+import org.apache.lucene.util.IOUtils;
+import org.elasticsearch.cli.ExitCodes;
+import org.elasticsearch.cli.SettingCommand;
+import org.elasticsearch.cli.Terminal;
+import org.elasticsearch.cli.UserException;
+import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.env.Environment;
+import org.elasticsearch.node.internal.InternalSettingsPreparer;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
-
-import joptsimple.OptionSet;
-import joptsimple.OptionSpec;
-import org.apache.lucene.util.IOUtils;
-import org.elasticsearch.cli.EnvironmentAwareCommand;
-import org.elasticsearch.cli.ExitCodes;
-import org.elasticsearch.cli.Terminal;
-import org.elasticsearch.cli.UserException;
-import org.elasticsearch.common.Strings;
-import org.elasticsearch.env.Environment;
+import java.util.Map;
 
 import static org.elasticsearch.cli.Terminal.Verbosity.VERBOSE;
 
 /**
  * A command for the plugin cli to remove a plugin from elasticsearch.
  */
-class RemovePluginCommand extends EnvironmentAwareCommand {
+class RemovePluginCommand extends SettingCommand {
 
     private final OptionSpec<String> arguments;
 
@@ -50,13 +54,15 @@ class RemovePluginCommand extends EnvironmentAwareCommand {
     }
 
     @Override
-    protected void execute(Terminal terminal, OptionSet options, Environment env) throws Exception {
+    protected void execute(Terminal terminal, OptionSet options, Map<String, String> settings) throws Exception {
         String arg = arguments.value(options);
-        execute(terminal, arg, env);
+        execute(terminal, arg, settings);
     }
 
     // pkg private for testing
-    void execute(Terminal terminal, String pluginName, Environment env) throws Exception {
+    void execute(Terminal terminal, String pluginName, Map<String, String> settings) throws Exception {
+        final Environment env = InternalSettingsPreparer.prepareEnvironment(Settings.EMPTY, terminal, settings);
+
         terminal.println("-> Removing " + Strings.coalesceToEmpty(pluginName) + "...");
 
         final Path pluginDir = env.pluginsFile().resolve(pluginName);

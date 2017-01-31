@@ -457,22 +457,6 @@ public class BytesStreamsTests extends ESTestCase {
         out.close();
     }
 
-    public void testWriteMap() throws IOException {
-        final int size = randomIntBetween(0, 100);
-        final Map<String, String> expected = new HashMap<>(randomIntBetween(0, 100));
-        for (int i = 0; i < size; ++i) {
-            expected.put(randomAsciiOfLength(2), randomAsciiOfLength(5));
-        }
-
-        final BytesStreamOutput out = new BytesStreamOutput();
-        out.writeMap(expected, StreamOutput::writeString, StreamOutput::writeString);
-        final StreamInput in = StreamInput.wrap(BytesReference.toBytes(out.bytes()));
-        final Map<String, String> loaded = in.readMap(StreamInput::readString, StreamInput::readString);
-
-        assertThat(loaded.size(), equalTo(expected.size()));
-        assertThat(expected, equalTo(loaded));
-    }
-
     public void testWriteMapOfLists() throws IOException {
         final int size = randomIntBetween(0, 5);
         final Map<String, List<String>> expected = new HashMap<>(size);
@@ -805,7 +789,7 @@ public class BytesStreamsTests extends ESTestCase {
         }
 
         assertTrue("If we're not compatible with 5.1.1 we can drop the assertion below",
-                Version.CURRENT.minimumCompatibilityVersion().onOrBefore(Version.V_5_1_1_UNRELEASED));
+                Version.CURRENT.minimumCompatibilityVersion().onOrBefore(Version.V_5_1_1));
         /* Read -1 as serialized by a version of Elasticsearch that supported writing negative numbers with writeVLong. Note that this
          * should be the same test as the first case (when value is negative) but we've kept some bytes so no matter what we do to
          * writeVLong in the future we can be sure we can read bytes as written by Elasticsearch before 5.1.2 */

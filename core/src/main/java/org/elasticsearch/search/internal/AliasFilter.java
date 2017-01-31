@@ -21,26 +21,21 @@ package org.elasticsearch.search.internal;
 
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.common.CheckedFunction;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
-import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryRewriteContext;
 
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Objects;
-import java.util.Optional;
 
 /**
  * Represents a {@link QueryBuilder} and a list of alias names that filters the builder is composed of.
  */
 public final class AliasFilter implements Writeable {
-
     private final String[] aliases;
     private final QueryBuilder filter;
     private final boolean reparseAliases;
@@ -53,7 +48,7 @@ public final class AliasFilter implements Writeable {
 
     public AliasFilter(StreamInput input) throws IOException {
         aliases = input.readStringArray();
-        if (input.getVersion().onOrAfter(Version.V_5_1_1_UNRELEASED)) {
+        if (input.getVersion().onOrAfter(Version.V_5_1_1)) {
             filter = input.readOptionalNamedWriteable(QueryBuilder.class);
             reparseAliases = false;
         } else {
@@ -66,14 +61,7 @@ public final class AliasFilter implements Writeable {
         if (reparseAliases) {
             // we are processing a filter received from a 5.0 node - we need to reparse this on the executing node
             final IndexMetaData indexMetaData = context.getIndexSettings().getIndexMetaData();
-            /* Being static, parseAliasFilter doesn't have access to whatever guts it needs to parse a query. Instead of passing in a bunch
-             * of dependencies we pass in a function that can perform the parsing. */
-            CheckedFunction<byte[], Optional<QueryBuilder>, IOException> filterParser = bytes -> {
-                try (XContentParser parser = XContentFactory.xContent(bytes).createParser(context.getXContentRegistry(), bytes)) {
-                    return context.newParseContext(parser).parseInnerQueryBuilder();
-                }
-            };
-            return ShardSearchRequest.parseAliasFilter(filterParser, indexMetaData, aliases);
+            return ShardSearchRequest.parseAliasFilter(context::newParseContext, indexMetaData, aliases);
         }
         return filter;
     }
@@ -89,7 +77,7 @@ public final class AliasFilter implements Writeable {
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeStringArray(aliases);
-        if (out.getVersion().onOrAfter(Version.V_5_1_1_UNRELEASED)) {
+        if (out.getVersion().onOrAfter(Version.V_5_1_1)) {
             out.writeOptionalNamedWriteable(filter);
         }
     }
@@ -128,14 +116,5 @@ public final class AliasFilter implements Writeable {
     @Override
     public int hashCode() {
         return Objects.hash(aliases, filter, reparseAliases);
-    }
-
-    @Override
-    public String toString() {
-        return "AliasFilter{" +
-            "aliases=" + Arrays.toString(aliases) +
-            ", filter=" + filter +
-            ", reparseAliases=" + reparseAliases +
-            '}';
     }
 }

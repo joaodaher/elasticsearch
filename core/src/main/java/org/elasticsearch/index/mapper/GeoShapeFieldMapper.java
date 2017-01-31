@@ -22,7 +22,6 @@ import org.apache.lucene.document.Field;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.spatial.prefix.PrefixTreeStrategy;
 import org.apache.lucene.spatial.prefix.RecursivePrefixTreeStrategy;
@@ -31,6 +30,7 @@ import org.apache.lucene.spatial.prefix.tree.GeohashPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.PackedQuadPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.QuadPrefixTree;
 import org.apache.lucene.spatial.prefix.tree.SpatialPrefixTree;
+import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.fieldstats.FieldStats;
 import org.elasticsearch.common.Explicit;
@@ -41,6 +41,7 @@ import org.elasticsearch.common.geo.builders.ShapeBuilder.Orientation;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.DistanceUnit;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.support.XContentMapValues;
 import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.index.query.QueryShardException;
 import org.locationtech.spatial4j.shape.Point;
@@ -52,6 +53,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+
+import static org.elasticsearch.common.xcontent.support.XContentMapValues.lenientNodeBooleanValue;
+
 
 /**
  * FieldMapper for indexing {@link org.locationtech.spatial4j.shape.Shape}s.
@@ -181,12 +185,11 @@ public class GeoShapeFieldMapper extends FieldMapper {
                     builder.fieldType().setStrategyName(fieldNode.toString());
                     iterator.remove();
                 } else if (Names.COERCE.equals(fieldName)) {
-                    builder.coerce(TypeParsers.nodeBooleanValue(fieldName, Names.COERCE, fieldNode));
+                    builder.coerce(lenientNodeBooleanValue(fieldNode));
                     iterator.remove();
                 } else if (Names.STRATEGY_POINTS_ONLY.equals(fieldName)
                     && builder.fieldType().strategyName.equals(SpatialStrategy.TERM.getStrategyName()) == false) {
-                    boolean pointsOnly = TypeParsers.nodeBooleanValue(fieldName, Names.STRATEGY_POINTS_ONLY, fieldNode);
-                    builder.fieldType().setPointsOnly(pointsOnly);
+                    builder.fieldType().setPointsOnly(XContentMapValues.lenientNodeBooleanValue(fieldNode));
                     iterator.remove();
                 }
             }
@@ -426,7 +429,7 @@ public class GeoShapeFieldMapper extends FieldMapper {
              * we don't have a specific type for geo_shape so we use an empty {@link FieldStats.Text}.
              * TODO: we should maybe support a new type that knows how to (de)encode the min/max information
              */
-            return new FieldStats.Text(maxDoc, -1, -1, -1, isSearchable(), isAggregatable());
+            return new FieldStats.Text(maxDoc, -1, -1, -1, isSearchable(), isAggregatable(), new BytesRef(), new BytesRef());
         }
     }
 
@@ -476,7 +479,7 @@ public class GeoShapeFieldMapper extends FieldMapper {
     }
 
     @Override
-    protected void parseCreateField(ParseContext context, List<IndexableField> fields) throws IOException {
+    protected void parseCreateField(ParseContext context, List<Field> fields) throws IOException {
     }
 
     @Override

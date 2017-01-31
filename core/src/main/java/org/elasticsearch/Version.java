@@ -79,8 +79,6 @@ public class Version {
     public static final Version V_2_4_2 = new Version(V_2_4_2_ID, org.apache.lucene.util.Version.LUCENE_5_5_2);
     public static final int V_2_4_3_ID = 2040399;
     public static final Version V_2_4_3 = new Version(V_2_4_3_ID, org.apache.lucene.util.Version.LUCENE_5_5_2);
-    public static final int V_2_4_4_ID = 2040499;
-    public static final Version V_2_4_4 = new Version(V_2_4_4_ID, org.apache.lucene.util.Version.LUCENE_5_5_2);
     public static final int V_5_0_0_alpha1_ID = 5000001;
     public static final Version V_5_0_0_alpha1 = new Version(V_5_0_0_alpha1_ID, org.apache.lucene.util.Version.LUCENE_6_0_0);
     public static final int V_5_0_0_alpha2_ID = 5000002;
@@ -101,22 +99,21 @@ public class Version {
     public static final Version V_5_0_1 = new Version(V_5_0_1_ID, org.apache.lucene.util.Version.LUCENE_6_2_1);
     public static final int V_5_0_2_ID = 5000299;
     public static final Version V_5_0_2 = new Version(V_5_0_2_ID, org.apache.lucene.util.Version.LUCENE_6_2_1);
-    public static final int V_5_0_3_ID_UNRELEASED = 5000399;
-    public static final Version V_5_0_3_UNRELEASED = new Version(V_5_0_3_ID_UNRELEASED, org.apache.lucene.util.Version.LUCENE_6_3_0);
     // no version constant for 5.1.0 due to inadvertent release
-    public static final int V_5_1_1_ID_UNRELEASED = 5010199;
-    public static final Version V_5_1_1_UNRELEASED = new Version(V_5_1_1_ID_UNRELEASED, org.apache.lucene.util.Version.LUCENE_6_3_0);
-    public static final int V_5_1_2_ID_UNRELEASED = 5010299;
-    public static final Version V_5_1_2_UNRELEASED = new Version(V_5_1_2_ID_UNRELEASED, org.apache.lucene.util.Version.LUCENE_6_3_0);
-    public static final int V_5_1_3_ID_UNRELEASED = 5010399;
-    public static final Version V_5_1_3_UNRELEASED = new Version(V_5_1_3_ID_UNRELEASED, org.apache.lucene.util.Version.LUCENE_6_3_0);
-    public static final int V_5_2_0_ID_UNRELEASED = 5020099;
-    public static final Version V_5_2_0_UNRELEASED = new Version(V_5_2_0_ID_UNRELEASED, org.apache.lucene.util.Version.LUCENE_6_4_0);
-    public static final int V_5_3_0_ID_UNRELEASED = 5030099;
-    public static final Version V_5_3_0_UNRELEASED = new Version(V_5_3_0_ID_UNRELEASED, org.apache.lucene.util.Version.LUCENE_6_4_0);
-    public static final Version CURRENT = V_5_3_0_UNRELEASED;
+    public static final int V_5_1_1_ID = 5010199;
+    public static final Version V_5_1_1 = new Version(V_5_1_1_ID, org.apache.lucene.util.Version.LUCENE_6_3_0);
+    public static final int V_5_1_2_ID = 5010299;
+    public static final Version V_5_1_2 = new Version(V_5_1_2_ID, org.apache.lucene.util.Version.LUCENE_6_3_0);
+    public static final Version CURRENT = V_5_1_2;
 
-    // unreleased versions must be added to the above list with the suffix _UNRELEASED (with the exception of CURRENT)
+    /* NOTE: don't add unreleased version to this list except of the version assigned to CURRENT.
+     * If you need a version that doesn't exist here for instance V_5_1_1 then go and create such a version
+     * as a constant where you need it:
+     * <pre>
+     *   public static final Version V_5_1_0_UNRELEASED = Version.fromId(5010099);
+     * </pre>
+     * Then go to VersionsTest.java and add a test for this constant VersionTests#testUnknownVersions().
+     * This is particularly useful if you are building a feature that needs a BWC layer for this unreleased version etc.*/
 
     static {
         assert CURRENT.luceneVersion.equals(org.apache.lucene.util.Version.LATEST) : "Version must be upgraded to ["
@@ -129,18 +126,10 @@ public class Version {
 
     public static Version fromId(int id) {
         switch (id) {
-            case V_5_3_0_ID_UNRELEASED:
-                return V_5_3_0_UNRELEASED;
-            case V_5_2_0_ID_UNRELEASED:
-                return V_5_2_0_UNRELEASED;
-            case V_5_1_3_ID_UNRELEASED:
-                return V_5_1_3_UNRELEASED;
-            case V_5_1_2_ID_UNRELEASED:
-                return V_5_1_2_UNRELEASED;
-            case V_5_1_1_ID_UNRELEASED:
-                return V_5_1_1_UNRELEASED;
-            case V_5_0_3_ID_UNRELEASED:
-                return V_5_0_3_UNRELEASED;
+            case V_5_1_2_ID:
+                return V_5_1_2;
+            case V_5_1_1_ID:
+                return V_5_1_1;
             case V_5_0_2_ID:
                 return V_5_0_2;
             case V_5_0_1_ID:
@@ -161,8 +150,6 @@ public class Version {
                 return V_5_0_0_alpha2;
             case V_5_0_0_alpha1_ID:
                 return V_5_0_0_alpha1;
-            case V_2_4_4_ID:
-                return V_2_4_4;
             case V_2_4_3_ID:
                 return V_2_4_3;
             case V_2_4_2_ID:
@@ -233,25 +220,11 @@ public class Version {
     }
 
     /**
-     * Returns the minimum version between the 2.
+     * Returns the smallest version between the 2.
      */
-    public static Version min(Version version1, Version version2) {
+    public static Version smallest(Version version1, Version version2) {
         return version1.id < version2.id ? version1 : version2;
     }
-
-    /**
-     * Returns the minimum version between the 2.
-     * @deprecated use {@link #min(Version, Version)} instead
-     */
-    @Deprecated
-    public static Version smallest(Version version1, Version version2) {
-        return min(version1, version2);
-    }
-
-    /**
-     * Returns the maximum version between the 2
-     */
-    public static Version max(Version version1, Version version2) { return version1.id > version2.id ? version1 : version2; }
 
     /**
      * Returns the version given its string representation, current version if the argument is null or empty
@@ -346,52 +319,7 @@ public class Version {
      * is a beta or RC release then the version itself is returned.
      */
     public Version minimumCompatibilityVersion() {
-        final int bwcMajor;
-        final int bwcMinor;
-        if (major >= 6) {
-            bwcMajor = major - 1;
-            bwcMinor = CURRENT.minor;
-        } else {
-            bwcMajor = major;
-            bwcMinor = 0;
-        }
-        return Version.min(this, fromId(bwcMajor * 1000000 + bwcMinor * 10000 + 99));
-    }
-
-    /**
-     * Returns the minimum created index version that this version supports. Indices created with lower versions
-     * can't be used with this version.
-     */
-    public Version minimumIndexCompatibilityVersion() {
-        final int bwcMajor;
-        if (major == 5) {
-            bwcMajor = 2; // we jumped from 2 to 5
-        } else {
-            bwcMajor = major - 1;
-        }
-        final int bwcMinor;
-        if (bwcMajor <= 2) {
-            // we do support beta1 prior to 5.x
-            // this allows clusters that have upgraded to 5.0 with an index created in 2.0.0.beta1 to go to 5.2 etc.
-            // otherwise the upgrade will fail and that is really not what we want. from 5 onwards we are supporting only GA
-            // releases
-            bwcMinor = 01;
-        } else {
-            bwcMinor = 99;
-        }
-
-        return Version.min(this, fromId(bwcMajor * 1000000 + bwcMinor));
-    }
-
-    /**
-     * Returns <code>true</code> iff both version are compatible. Otherwise <code>false</code>
-     */
-    public boolean isCompatible(Version version) {
-        boolean compatible = onOrAfter(version.minimumCompatibilityVersion())
-            && version.onOrAfter(minimumCompatibilityVersion());
-
-        assert compatible == false || Math.max(major, version.major) - Math.min(major, version.major) <= 1;
-        return compatible;
+        return Version.smallest(this, fromId(major * 1000000 + 99));
     }
 
     @SuppressForbidden(reason = "System.out.*")

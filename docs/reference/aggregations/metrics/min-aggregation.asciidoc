@@ -10,6 +10,10 @@ NOTE: The `min` and `max` aggregation operate on the `double` representation of
 the data. As a consequence, the result may be approximate when running on longs
 whose absolute value is greater than +2^53+.
 
+NOTE: The `min` and `max` aggregation operate on the `double` representation of
+the data. As a consequence, the result may be approximate when running on longs
+whose absolute value is greater than +2^53+.
+
 Computing the min price value across all documents:
 
 [source,js]

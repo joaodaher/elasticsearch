@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package org.elasticsearch.action.bulk.byscroll;
+package org.elasticsearch.index.reindex;
 
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.Version;
@@ -51,14 +51,15 @@ public abstract class BulkByScrollTask extends CancellableTask {
 
     /**
      * The number of sub-slices that are still running. {@link WorkingBulkByScrollTask} will always have 0 and
-     * {@link ParentBulkByScrollTask} will return the number of waiting tasks. Used to decide how to perform rethrottling.
+     * {@link ParentBulkByScrollTask} will return the number of waiting tasks. Used by {@link TransportRethrottleAction} to decide how to
+     * perform the rethrottling.
      */
-    public abstract int runningSliceSubTasks();
+    abstract int runningSliceSubTasks();
 
     /**
      * Apply the {@code newRequestsPerSecond}.
      */
-    public abstract void rethrottle(float newRequestsPerSecond);
+    abstract void rethrottle(float newRequestsPerSecond);
 
     /*
      * Overridden to force children to return compatible status.
@@ -69,11 +70,6 @@ public abstract class BulkByScrollTask extends CancellableTask {
      * Build the status for this task given a snapshot of the information of running slices.
      */
     public abstract TaskInfo getInfoGivenSliceInfo(String localNodeId, List<TaskInfo> sliceInfo);
-
-    @Override
-    public boolean shouldCancelChildrenOnCancellation() {
-        return true;
-    }
 
     public static class Status implements Task.Status, SuccessfullyProcessed {
         public static final String NAME = "bulk-by-scroll";
@@ -109,7 +105,7 @@ public abstract class BulkByScrollTask extends CancellableTask {
         public Status(Integer sliceId, long total, long updated, long created, long deleted, int batches, long versionConflicts, long noops,
                 long bulkRetries, long searchRetries, TimeValue throttled, float requestsPerSecond, @Nullable String reasonCancelled,
                 TimeValue throttledUntil) {
-            this.sliceId = sliceId == null ? null : checkPositive(sliceId, "sliceId");
+            this.sliceId = sliceId == null ? null : checkPositive(sliceId, "sliceId"); 
             this.total = checkPositive(total, "total");
             this.updated = checkPositive(updated, "updated");
             this.created = checkPositive(created, "created");
@@ -189,7 +185,7 @@ public abstract class BulkByScrollTask extends CancellableTask {
         }
 
         public Status(StreamInput in) throws IOException {
-            if (in.getVersion().onOrAfter(Version.V_5_1_1_UNRELEASED)) {
+            if (in.getVersion().onOrAfter(Version.V_5_1_1)) {
                 sliceId = in.readOptionalVInt();
             } else {
                 sliceId = null;
@@ -207,7 +203,7 @@ public abstract class BulkByScrollTask extends CancellableTask {
             requestsPerSecond = in.readFloat();
             reasonCancelled = in.readOptionalString();
             throttledUntil = new TimeValue(in);
-            if (in.getVersion().onOrAfter(Version.V_5_1_1_UNRELEASED)) {
+            if (in.getVersion().onOrAfter(Version.V_5_1_1)) {
                 sliceStatuses = in.readList(stream -> stream.readOptionalWriteable(StatusOrException::new));
             } else {
                 sliceStatuses = emptyList();
@@ -216,7 +212,7 @@ public abstract class BulkByScrollTask extends CancellableTask {
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-            if (out.getVersion().onOrAfter(Version.V_5_1_1_UNRELEASED)) {
+            if (out.getVersion().onOrAfter(Version.V_5_1_1)) {
                 out.writeOptionalVInt(sliceId);
             }
             out.writeVLong(total);
@@ -232,7 +228,7 @@ public abstract class BulkByScrollTask extends CancellableTask {
             out.writeFloat(requestsPerSecond);
             out.writeOptionalString(reasonCancelled);
             throttledUntil.writeTo(out);
-            if (out.getVersion().onOrAfter(Version.V_5_1_1_UNRELEASED)) {
+            if (out.getVersion().onOrAfter(Version.V_5_1_1)) {
                 out.writeVInt(sliceStatuses.size());
                 for (StatusOrException sliceStatus : sliceStatuses) {
                     out.writeOptionalWriteable(sliceStatus);
@@ -490,7 +486,7 @@ public abstract class BulkByScrollTask extends CancellableTask {
                 status.toXContent(builder, params);
             } else {
                 builder.startObject();
-                ElasticsearchException.generateThrowableXContent(builder, params, exception);
+                ElasticsearchException.toXContent(builder, params, exception);
                 builder.endObject();
             }
             return builder;
@@ -514,5 +510,4 @@ public abstract class BulkByScrollTask extends CancellableTask {
             return Objects.hash(status, exception);
         }
     }
-
 }

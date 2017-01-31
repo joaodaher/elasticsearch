@@ -29,7 +29,6 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
-import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.Constants;
 import org.elasticsearch.Version;
@@ -64,7 +63,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.LocalTransportAddress;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
-import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.index.VersionType;
@@ -123,11 +121,9 @@ import java.util.stream.IntStream;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
 import static org.elasticsearch.common.lucene.Lucene.cleanLuceneIndex;
-import static org.elasticsearch.common.lucene.Lucene.readScoreDoc;
 import static org.elasticsearch.common.xcontent.ToXContent.EMPTY_PARAMS;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.index.engine.Engine.Operation.Origin.PRIMARY;
-import static org.elasticsearch.repositories.RepositoryData.EMPTY_REPO_GEN;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
@@ -142,7 +138,7 @@ import static org.hamcrest.Matchers.nullValue;
 public class IndexShardTests extends IndexShardTestCase {
 
     public static ShardStateMetaData load(Logger logger, Path... shardPaths) throws IOException {
-        return ShardStateMetaData.FORMAT.loadLatestState(logger, NamedXContentRegistry.EMPTY, shardPaths);
+        return ShardStateMetaData.FORMAT.loadLatestState(logger, shardPaths);
     }
 
     public static void write(ShardStateMetaData shardStateMetaData,
@@ -547,9 +543,9 @@ public class IndexShardTests extends IndexShardTestCase {
         closeShards(shard);
     }
 
-    private ParsedDocument testParsedDocument(String id, String type, String routing, long timestamp, long ttl,
+    private ParsedDocument testParsedDocument(String uid, String id, String type, String routing, long timestamp, long ttl,
                                               ParseContext.Document document, BytesReference source, Mapping mappingUpdate) {
-        Field uidField = new Field("_uid", Uid.createUid(type, id), UidFieldMapper.Defaults.FIELD_TYPE);
+        Field uidField = new Field("_uid", uid, UidFieldMapper.Defaults.FIELD_TYPE);
         Field versionField = new NumericDocValuesField("_version", 0);
         document.add(uidField);
         document.add(versionField);
@@ -569,55 +565,47 @@ public class IndexShardTests extends IndexShardTestCase {
         shard.close("simon says", true);
         shard = reinitShard(shard, new IndexingOperationListener() {
             @Override
-            public Engine.Index preIndex(ShardId shardId, Engine.Index operation) {
+            public Engine.Index preIndex(Engine.Index operation) {
                 preIndex.incrementAndGet();
                 return operation;
             }
 
             @Override
-            public void postIndex(ShardId shardId, Engine.Index index, Engine.IndexResult result) {
-                if (result.hasFailure() == false) {
-                    if (result.isCreated()) {
-                        postIndexCreate.incrementAndGet();
-                    } else {
-                        postIndexUpdate.incrementAndGet();
-                    }
+            public void postIndex(Engine.Index index, boolean created) {
+                if (created) {
+                    postIndexCreate.incrementAndGet();
                 } else {
-                    postIndex(shardId, index, result.getFailure());
+                    postIndexUpdate.incrementAndGet();
                 }
             }
 
             @Override
-            public void postIndex(ShardId shardId, Engine.Index index, Exception ex) {
+            public void postIndex(Engine.Index index, Exception ex) {
                 postIndexException.incrementAndGet();
             }
 
             @Override
-            public Engine.Delete preDelete(ShardId shardId, Engine.Delete delete) {
+            public Engine.Delete preDelete(Engine.Delete delete) {
                 preDelete.incrementAndGet();
                 return delete;
             }
 
             @Override
-            public void postDelete(ShardId shardId, Engine.Delete delete, Engine.DeleteResult result) {
-                if (result.hasFailure() == false) {
-                    postDelete.incrementAndGet();
-                } else {
-                    postDelete(shardId, delete, result.getFailure());
-                }
+            public void postDelete(Engine.Delete delete) {
+                postDelete.incrementAndGet();
             }
 
             @Override
-            public void postDelete(ShardId shardId, Engine.Delete delete, Exception ex) {
+            public void postDelete(Engine.Delete delete, Exception ex) {
                 postDeleteException.incrementAndGet();
 
             }
         });
         recoveryShardFromStore(shard);
 
-        ParsedDocument doc = testParsedDocument("1", "test", null, -1, -1, new ParseContext.Document(),
+        ParsedDocument doc = testParsedDocument("1", "1", "test", null, -1, -1, new ParseContext.Document(),
             new BytesArray(new byte[]{1}), null);
-        Engine.Index index = new Engine.Index(new Term("_uid", doc.uid()), doc);
+        Engine.Index index = new Engine.Index(new Term("_uid", "1"), doc);
         shard.index(index);
         assertEquals(1, preIndex.get());
         assertEquals(1, postIndexCreate.get());
@@ -636,7 +624,7 @@ public class IndexShardTests extends IndexShardTestCase {
         assertEquals(0, postDelete.get());
         assertEquals(0, postDeleteException.get());
 
-        Engine.Delete delete = new Engine.Delete("test", "1", new Term("_uid", doc.uid()));
+        Engine.Delete delete = new Engine.Delete("test", "1", new Term("_uid", "1"));
         shard.delete(delete);
 
         assertEquals(2, preIndex.get());
@@ -653,7 +641,7 @@ public class IndexShardTests extends IndexShardTestCase {
         try {
             shard.index(index);
             fail();
-        } catch (AlreadyClosedException e) {
+        } catch (IllegalIndexShardStateException e) {
 
         }
 
@@ -667,7 +655,7 @@ public class IndexShardTests extends IndexShardTestCase {
         try {
             shard.delete(delete);
             fail();
-        } catch (AlreadyClosedException e) {
+        } catch (IllegalIndexShardStateException e) {
 
         }
 
@@ -1140,25 +1128,26 @@ public class IndexShardTests extends IndexShardTestCase {
         final AtomicInteger postDelete = new AtomicInteger();
         IndexingOperationListener listener = new IndexingOperationListener() {
             @Override
-            public Engine.Index preIndex(ShardId shardId, Engine.Index index) {
+            public Engine.Index preIndex(Engine.Index operation) {
                 preIndex.incrementAndGet();
-                return index;
+                return operation;
             }
 
             @Override
-            public void postIndex(ShardId shardId, Engine.Index index, Engine.IndexResult result) {
+            public void postIndex(Engine.Index index, boolean created) {
                 postIndex.incrementAndGet();
             }
 
             @Override
-            public Engine.Delete preDelete(ShardId shardId, Engine.Delete delete) {
+            public Engine.Delete preDelete(Engine.Delete delete) {
                 preDelete.incrementAndGet();
                 return delete;
             }
 
             @Override
-            public void postDelete(ShardId shardId, Engine.Delete delete, Engine.DeleteResult result) {
+            public void postDelete(Engine.Delete delete) {
                 postDelete.incrementAndGet();
+
             }
         };
         final IndexShard newShard = reinitShard(shard, listener);
@@ -1371,10 +1360,10 @@ public class IndexShardTests extends IndexShardTestCase {
             for (int i = 0; i < numDocs; i++) {
                 final String id = Integer.toString(i);
                 final ParsedDocument doc =
-                    testParsedDocument(id, "test", null, -1, -1, new ParseContext.Document(), new BytesArray(new byte[]{}), null);
+                    testParsedDocument(id, id, "test", null, -1, -1, new ParseContext.Document(), new BytesArray(new byte[]{}), null);
                 final Engine.Index index =
                     new Engine.Index(
-                        new Term("_uid", doc.uid()),
+                        new Term("_uid", id),
                         doc,
                         Versions.MATCH_ANY,
                         VersionType.INTERNAL,
@@ -1382,8 +1371,8 @@ public class IndexShardTests extends IndexShardTestCase {
                         System.nanoTime(),
                         -1,
                         false);
-                Engine.IndexResult indexResult = indexShard.index(index);
-                assertThat(indexResult.getVersion(), equalTo(1L));
+                indexShard.index(index);
+                assertThat(index.version(), equalTo(1L));
             }
 
             indexShard.refresh("test");
@@ -1399,10 +1388,10 @@ public class IndexShardTests extends IndexShardTestCase {
             for (final Integer i : ids) {
                 final String id = Integer.toString(i);
                 final ParsedDocument doc =
-                    testParsedDocument(id, "test", null, -1, -1, new ParseContext.Document(), new BytesArray(new byte[]{}), null);
+                    testParsedDocument(id, id, "test", null, -1, -1, new ParseContext.Document(), new BytesArray(new byte[]{}), null);
                 final Engine.Index index =
                     new Engine.Index(
-                        new Term("_uid", doc.uid()),
+                        new Term("_uid", id),
                         doc,
                         Versions.MATCH_ANY,
                         VersionType.INTERNAL,
@@ -1410,8 +1399,8 @@ public class IndexShardTests extends IndexShardTestCase {
                         System.nanoTime(),
                         -1,
                         false);
-                Engine.IndexResult indexResult = indexShard.index(index);
-                assertThat(indexResult.getVersion(), equalTo(2L));
+                indexShard.index(index);
+                assertThat(index.version(), equalTo(2L));
             }
 
             // flush the buffered deletes
@@ -1485,7 +1474,7 @@ public class IndexShardTests extends IndexShardTestCase {
         public RepositoryData getRepositoryData() {
             Map<IndexId, Set<SnapshotId>> map = new HashMap<>();
             map.put(new IndexId(indexName, "blah"), emptySet());
-            return new RepositoryData(EMPTY_REPO_GEN, Collections.emptyList(), map, Collections.emptyList());
+            return new RepositoryData(Collections.emptyList(), map);
         }
 
         @Override
@@ -1493,13 +1482,12 @@ public class IndexShardTests extends IndexShardTestCase {
         }
 
         @Override
-        public SnapshotInfo finalizeSnapshot(SnapshotId snapshotId, List<IndexId> indices, long startTime, String failure, int totalShards,
-                                             List<SnapshotShardFailure> shardFailures, long repositoryStateId) {
+        public SnapshotInfo finalizeSnapshot(SnapshotId snapshotId, List<IndexId> indices, long startTime, String failure, int totalShards, List<SnapshotShardFailure> shardFailures) {
             return null;
         }
 
         @Override
-        public void deleteSnapshot(SnapshotId snapshotId, long repositoryStateId) {
+        public void deleteSnapshot(SnapshotId snapshotId) {
         }
 
         @Override

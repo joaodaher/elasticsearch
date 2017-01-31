@@ -20,10 +20,6 @@ As a general rule:
 See <<setup-upgrade>> for more info.
 --
 
-include::migrate_5_3.asciidoc[]
-
-include::migrate_5_2.asciidoc[]
-
 include::migrate_5_1.asciidoc[]
 
 include::migrate_5_0.asciidoc[]

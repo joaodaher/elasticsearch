@@ -66,6 +66,11 @@ abstract class ESElasticsearchCliTestCase extends ESTestCase {
                 protected boolean addShutdownHook() {
                     return false;
                 }
+
+                @Override
+                protected boolean addShutdownHook() {
+                    return false;
+                }
             }, terminal);
             assertThat(status, equalTo(expectedStatus));
             assertThat(init.get(), equalTo(expectedInit));

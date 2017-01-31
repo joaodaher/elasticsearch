@@ -19,14 +19,13 @@
 
 package org.elasticsearch.index.mapper;
 
+import org.apache.lucene.document.Field;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.IndexableField;
-import org.apache.lucene.index.Terms;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.LegacyNumericUtils;
-import org.apache.lucene.util.NumericUtils;
 import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.fieldstats.FieldStats;
@@ -223,7 +222,7 @@ public abstract class BaseGeoPointFieldMapper extends FieldMapper implements Arr
                     if (propName.equals("lat_lon")) {
                         deprecationLogger.deprecated(CONTENT_TYPE + " lat_lon parameter is deprecated and will be removed "
                             + "in the next major release");
-                        builder.enableLatLon(XContentMapValues.lenientNodeBooleanValue(propNode, propName));
+                        builder.enableLatLon(XContentMapValues.lenientNodeBooleanValue(propNode));
                         iterator.remove();
                     } else if (propName.equals("precision_step")) {
                         deprecationLogger.deprecated(CONTENT_TYPE + " precision_step parameter is deprecated and will be removed "
@@ -233,13 +232,13 @@ public abstract class BaseGeoPointFieldMapper extends FieldMapper implements Arr
                     } else if (propName.equals("geohash")) {
                         deprecationLogger.deprecated(CONTENT_TYPE + " geohash parameter is deprecated and will be removed "
                             + "in the next major release");
-                        builder.enableGeoHash(XContentMapValues.lenientNodeBooleanValue(propNode, propName));
+                        builder.enableGeoHash(XContentMapValues.lenientNodeBooleanValue(propNode));
                         iterator.remove();
                     } else if (propName.equals("geohash_prefix")) {
                         deprecationLogger.deprecated(CONTENT_TYPE + " geohash_prefix parameter is deprecated and will be removed "
                             + "in the next major release");
-                        builder.geoHashPrefix(XContentMapValues.lenientNodeBooleanValue(propNode, propName));
-                        if (XContentMapValues.lenientNodeBooleanValue(propNode, propName)) {
+                        builder.geoHashPrefix(XContentMapValues.lenientNodeBooleanValue(propNode));
+                        if (XContentMapValues.lenientNodeBooleanValue(propNode)) {
                             builder.enableGeoHash(true);
                         }
                         iterator.remove();
@@ -256,7 +255,7 @@ public abstract class BaseGeoPointFieldMapper extends FieldMapper implements Arr
                 }
 
                 if (propName.equals(Names.IGNORE_MALFORMED)) {
-                    builder.ignoreMalformed(TypeParsers.nodeBooleanValue(name, Names.IGNORE_MALFORMED, propNode));
+                    builder.ignoreMalformed(XContentMapValues.lenientNodeBooleanValue(propNode));
                     iterator.remove();
                 }
             }
@@ -292,10 +291,10 @@ public abstract class BaseGeoPointFieldMapper extends FieldMapper implements Arr
                 return null;
             }
             /**
-             * we don't have a specific type for geo_point so we use an empty {@link FieldStats.Text}.
+             * we don't have a specific type for geo_shape so we use an empty {@link FieldStats.Text}.
              * TODO: we should maybe support a new type that knows how to (de)encode the min/max information
              */
-            return new FieldStats.Text(maxDoc, -1, -1, -1, isSearchable(), isAggregatable());
+            return new FieldStats.Text(maxDoc, -1, -1, -1, isSearchable(), isAggregatable(), new BytesRef(), new BytesRef());
         }
     }
 
@@ -424,24 +423,6 @@ public abstract class BaseGeoPointFieldMapper extends FieldMapper implements Arr
         public Query termQuery(Object value, QueryShardContext context) {
             throw new QueryShardException(context, "Geo fields do not support exact searching, use dedicated geo queries instead: [" + name() + "]");
         }
-
-        @Override
-        public FieldStats.GeoPoint stats(IndexReader reader) throws IOException {
-            String field = name();
-            FieldInfo fi = org.apache.lucene.index.MultiFields.getMergedFieldInfos(reader).fieldInfo(field);
-            if (fi == null) {
-                return null;
-            }
-
-            Terms terms = org.apache.lucene.index.MultiFields.getTerms(reader, field);
-            if (terms == null) {
-                return new FieldStats.GeoPoint(reader.maxDoc(), 0L, -1L, -1L, isSearchable(), isAggregatable());
-            }
-            GeoPoint minPt = GeoPoint.fromGeohash(NumericUtils.sortableBytesToLong(terms.getMin().bytes, terms.getMin().offset));
-            GeoPoint maxPt = GeoPoint.fromGeohash(NumericUtils.sortableBytesToLong(terms.getMax().bytes, terms.getMax().offset));
-            return new FieldStats.GeoPoint(reader.maxDoc(), terms.getDocCount(), -1L, terms.getSumTotalTermFreq(), isSearchable(),
-                isAggregatable(), minPt, maxPt);
-        }
     }
 
     protected FieldMapper latMapper;
@@ -503,7 +484,7 @@ public abstract class BaseGeoPointFieldMapper extends FieldMapper implements Arr
     }
 
     @Override
-    protected void parseCreateField(ParseContext context, List<IndexableField> fields) throws IOException {
+    protected void parseCreateField(ParseContext context, List<Field> fields) throws IOException {
         throw new UnsupportedOperationException("Parsing is implemented in parse(), this method should NEVER be called");
     }
 

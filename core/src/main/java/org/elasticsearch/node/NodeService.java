@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package org.elasticsearch.node;
+package org.elasticsearch.node.service;
 
 import org.elasticsearch.Build;
 import org.elasticsearch.Version;
@@ -27,10 +27,11 @@ import org.elasticsearch.action.admin.indices.stats.CommonStatsFlags;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.component.AbstractComponent;
+import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.settings.SettingsFilter;
 import org.elasticsearch.discovery.Discovery;
-import org.elasticsearch.http.HttpServerTransport;
+import org.elasticsearch.http.HttpServer;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
 import org.elasticsearch.ingest.IngestService;
@@ -54,16 +55,17 @@ public class NodeService extends AbstractComponent implements Closeable {
     private final IngestService ingestService;
     private final SettingsFilter settingsFilter;
     private ScriptService scriptService;
-    private final HttpServerTransport httpServerTransport;
 
+    @Nullable
+    private final HttpServer httpServer;
 
     private final Discovery discovery;
 
-    NodeService(Settings settings, ThreadPool threadPool, MonitorService monitorService, Discovery discovery,
+    @Inject
+    public NodeService(Settings settings, ThreadPool threadPool, MonitorService monitorService, Discovery discovery,
                        TransportService transportService, IndicesService indicesService, PluginsService pluginService,
-                       CircuitBreakerService circuitBreakerService, ScriptService scriptService,
-                       @Nullable HttpServerTransport httpServerTransport, IngestService ingestService, ClusterService clusterService,
-                       SettingsFilter settingsFilter) {
+                       CircuitBreakerService circuitBreakerService, ScriptService scriptService, @Nullable HttpServer httpServer,
+                       IngestService ingestService, ClusterService clusterService, SettingsFilter settingsFilter) {
         super(settings);
         this.threadPool = threadPool;
         this.monitorService = monitorService;
@@ -72,12 +74,12 @@ public class NodeService extends AbstractComponent implements Closeable {
         this.discovery = discovery;
         this.pluginService = pluginService;
         this.circuitBreakerService = circuitBreakerService;
-        this.httpServerTransport = httpServerTransport;
+        this.httpServer = httpServer;
         this.ingestService = ingestService;
         this.settingsFilter = settingsFilter;
         this.scriptService = scriptService;
-        clusterService.addStateApplier(ingestService.getPipelineStore());
-        clusterService.addStateApplier(ingestService.getPipelineExecutionService());
+        clusterService.add(ingestService.getPipelineStore());
+        clusterService.add(ingestService.getPipelineExecutionService());
     }
 
     public NodeInfo info(boolean settings, boolean os, boolean process, boolean jvm, boolean threadPool,
@@ -89,7 +91,7 @@ public class NodeService extends AbstractComponent implements Closeable {
                 jvm ? monitorService.jvmService().info() : null,
                 threadPool ? this.threadPool.info() : null,
                 transport ? transportService.info() : null,
-                http ? (httpServerTransport == null ? null : httpServerTransport.info()) : null,
+                http ? (httpServer == null ? null : httpServer.info()) : null,
                 plugin ? (pluginService == null ? null : pluginService.info()) : null,
                 ingest ? (ingestService == null ? null : ingestService.info()) : null,
                 indices ? indicesService.getTotalIndexingBufferBytes() : null
@@ -109,7 +111,7 @@ public class NodeService extends AbstractComponent implements Closeable {
                 threadPool ? this.threadPool.stats() : null,
                 fs ? monitorService.fsService().stats() : null,
                 transport ? transportService.stats() : null,
-                http ? (httpServerTransport == null ? null : httpServerTransport.stats()) : null,
+                http ? (httpServer == null ? null : httpServer.stats()) : null,
                 circuitBreaker ? circuitBreakerService.stats() : null,
                 script ? scriptService.stats() : null,
                 discoveryStats ? discovery.stats() : null,
