@@ -23,6 +23,7 @@ import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.DocWriteResponse;
 import org.elasticsearch.action.admin.indices.flush.FlushRequest;
+import org.elasticsearch.action.bulk.TransportShardBulkAction;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.index.TransportIndexAction;
@@ -39,6 +40,7 @@ import org.elasticsearch.common.collect.Iterators;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.LocalTransportAddress;
 import org.elasticsearch.index.Index;
+import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.mapper.Uid;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.IndexShardTestCase;
@@ -63,6 +65,8 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
+import static org.elasticsearch.action.bulk.TransportShardBulkAction.executeIndexRequestOnPrimary;
+import static org.elasticsearch.action.bulk.TransportShardBulkAction.executeIndexRequestOnReplica;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 
@@ -277,10 +281,24 @@ public abstract class ESIndexLevelReplicationTestCase extends IndexShardTestCase
 
         @Override
         public IndexingResult perform(IndexRequest request) throws Exception {
-            TransportWriteAction.WriteResult<IndexResponse> result = TransportIndexAction.executeIndexRequestOnPrimary(request, primary,
-                null);
+            Engine.IndexResult indexResult = TransportShardBulkAction.executeIndexRequestOnPrimary(request, primary,
+                    null);
+            if (indexResult.hasFailure() == false) {
+                // update the version on request so it will happen on the replicas
+                final long version = indexResult.getVersion();
+                request.version(version);
+                request.versionType(request.versionType().versionTypeForReplicationAndRecovery());
+                assert request.versionType().validateVersionForWrites(request.version());
+            }
             request.primaryTerm(primary.getPrimaryTerm());
-            return new IndexingResult(request, result.getResponse());
+            IndexResponse response = new IndexResponse(
+                    primary.shardId(),
+                    request.type(),
+                    request.id(),
+                    indexResult.getVersion(),
+                    indexResult.isCreated());
+            request.primaryTerm(primary.getPrimaryTerm());
+            return new IndexingResult(request, response);
         }
 
     }
@@ -297,7 +315,7 @@ public abstract class ESIndexLevelReplicationTestCase extends IndexShardTestCase
             try {
                 IndexShard replica = replicationGroup.replicas.stream()
                     .filter(s -> replicaRouting.isSameAllocation(s.routingEntry())).findFirst().get();
-                TransportIndexAction.executeIndexRequestOnReplica(request, replica);
+                TransportShardBulkAction.executeIndexRequestOnReplica(request, replica);
                 listener.onResponse(TransportResponse.Empty.INSTANCE);
             } catch (Exception t) {
                 listener.onFailure(t);

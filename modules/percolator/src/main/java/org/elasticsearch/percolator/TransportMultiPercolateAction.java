@@ -32,13 +32,11 @@ import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.HandledTransportAction;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
-import org.elasticsearch.common.ParseFieldMatcher;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
-import org.elasticsearch.search.SearchRequestParsers;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
@@ -53,20 +51,16 @@ import java.util.Map;
 public class TransportMultiPercolateAction extends HandledTransportAction<MultiPercolateRequest, MultiPercolateResponse> {
 
     private final Client client;
-    private final ParseFieldMatcher parseFieldMatcher;
-    private final SearchRequestParsers searchRequestParsers;
     private final NamedXContentRegistry xContentRegistry;
 
     @Inject
     public TransportMultiPercolateAction(Settings settings, ThreadPool threadPool, TransportService transportService,
                                          ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver,
-                                         Client client, SearchRequestParsers searchRequestParsers, NamedXContentRegistry xContentRegistry) {
+                                         Client client, NamedXContentRegistry xContentRegistry) {
         super(settings, MultiPercolateAction.NAME, threadPool, transportService, actionFilters,
               indexNameExpressionResolver, MultiPercolateRequest::new);
         this.client = client;
-        this.searchRequestParsers = searchRequestParsers;
         this.xContentRegistry = xContentRegistry;
-        this.parseFieldMatcher = new ParseFieldMatcher(settings);
     }
 
     @Override
@@ -159,9 +153,7 @@ public class TransportMultiPercolateAction extends HandledTransportAction<MultiP
             PercolateRequest percolateRequest = multiPercolateRequest.requests().get(i);
             BytesReference docSource = getResponseSources.get(i);
             try {
-                SearchRequest searchRequest = TransportPercolateAction.createSearchRequest(
-                    percolateRequest, docSource,
-                    searchRequestParsers.aggParsers, searchRequestParsers.searchExtParsers, xContentRegistry, parseFieldMatcher);
+                SearchRequest searchRequest = TransportPercolateAction.createSearchRequest(percolateRequest, docSource, xContentRegistry);
                 multiSearchRequest.add(searchRequest);
             } catch (Exception e) {
                 preFailures.put(i, new MultiPercolateResponse.Item(e));

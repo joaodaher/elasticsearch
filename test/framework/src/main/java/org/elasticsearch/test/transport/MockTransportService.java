@@ -23,6 +23,7 @@ import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterModule;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.component.Lifecycle;
 import org.elasticsearch.common.component.LifecycleListener;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
@@ -34,15 +35,19 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.BoundTransportAddress;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
+import org.elasticsearch.indices.breaker.CircuitBreakerService;
 import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
+import org.elasticsearch.node.Node;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.tasks.TaskManager;
 import org.elasticsearch.test.tasks.MockTaskManager;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.ConnectTransportException;
 import org.elasticsearch.transport.ConnectionProfile;
+import org.elasticsearch.transport.MockTcpTransport;
 import org.elasticsearch.transport.RequestHandlerRegistry;
 import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.TransportException;
@@ -63,11 +68,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 
 /**
  * A mock transport service that allows to simulate different network topology failures.
@@ -92,7 +97,7 @@ public final class MockTransportService extends TransportService {
     }
 
     public static MockTransportService local(Settings settings, Version version, ThreadPool threadPool,
-            @Nullable ClusterSettings clusterSettings) {
+                                             @Nullable ClusterSettings clusterSettings) {
         NamedWriteableRegistry namedWriteableRegistry = new NamedWriteableRegistry(ClusterModule.getNamedWriteables());
         Transport transport = new LocalTransport(settings, threadPool, namedWriteableRegistry, new NoneCircuitBreakerService()) {
             @Override
@@ -102,6 +107,38 @@ public final class MockTransportService extends TransportService {
         };
         return new MockTransportService(settings, transport, threadPool, TransportService.NOOP_TRANSPORT_INTERCEPTOR, clusterSettings);
     }
+
+    public static MockTransportService mockTcp(Settings settings, Version version, ThreadPool threadPool,
+                                             @Nullable ClusterSettings clusterSettings) {
+        NamedWriteableRegistry namedWriteableRegistry = new NamedWriteableRegistry(ClusterModule.getNamedWriteables());
+        Transport transport = new MockTcpTransport(settings, threadPool, BigArrays.NON_RECYCLING_INSTANCE,  new NoneCircuitBreakerService(),
+            namedWriteableRegistry, new NetworkService(settings, Collections.emptyList()), version);
+        if (version.equals(Version.CURRENT)) {
+            return new MockTransportService(settings, transport, threadPool, TransportService.NOOP_TRANSPORT_INTERCEPTOR, clusterSettings);
+        } else {
+            return new MockTransportService(settings, transport, threadPool, TransportService.NOOP_TRANSPORT_INTERCEPTOR, (boundAddress) ->
+                createLocal(settings, boundAddress.publishAddress(), settings.get(Node.NODE_NAME_SETTING.getKey(),
+                    UUIDs.randomBase64UUID()), version), clusterSettings);
+        }
+    }
+
+    /** Creates a DiscoveryNode representing the local node. */
+    private static DiscoveryNode createLocal(Settings settings, TransportAddress publishAddress, String nodeId, Version version) {
+        Map<String, String> attributes = new HashMap<>(Node.NODE_ATTRIBUTES.get(settings).getAsMap());
+        Set<DiscoveryNode.Role> roles = new HashSet<>();
+        if (Node.NODE_INGEST_SETTING.get(settings)) {
+            roles.add(DiscoveryNode.Role.INGEST);
+        }
+        if (Node.NODE_MASTER_SETTING.get(settings)) {
+            roles.add(DiscoveryNode.Role.MASTER);
+        }
+        if (Node.NODE_DATA_SETTING.get(settings)) {
+            roles.add(DiscoveryNode.Role.DATA);
+        }
+
+        return new DiscoveryNode(Node.NODE_NAME_SETTING.get(settings), nodeId, publishAddress, attributes, roles, version);
+    }
+
 
     private final Transport original;
 
@@ -113,7 +150,21 @@ public final class MockTransportService extends TransportService {
      */
     public MockTransportService(Settings settings, Transport transport, ThreadPool threadPool, TransportInterceptor interceptor,
             @Nullable ClusterSettings clusterSettings) {
-        super(settings, new LookupTestTransport(transport), threadPool, interceptor, clusterSettings);
+        this(settings, transport, threadPool, interceptor, (boundAddress) ->
+            DiscoveryNode.createLocal(settings, boundAddress.publishAddress(), settings.get(Node.NODE_NAME_SETTING.getKey(),
+                UUIDs.randomBase64UUID())), clusterSettings);
+    }
+
+    /**
+     * Build the service.
+     *
+     * @param clusterSettings if non null the the {@linkplain TransportService} will register with the {@link ClusterSettings} for settings
+     *        updates for {@link #TRACE_LOG_EXCLUDE_SETTING} and {@link #TRACE_LOG_INCLUDE_SETTING}.
+     */
+    public MockTransportService(Settings settings, Transport transport, ThreadPool threadPool, TransportInterceptor interceptor,
+                                Function<BoundTransportAddress, DiscoveryNode> localNodeFactory,
+                                @Nullable ClusterSettings clusterSettings) {
+        super(settings, new LookupTestTransport(transport), threadPool, interceptor, localNodeFactory, clusterSettings);
         this.original = transport;
     }
 
@@ -693,6 +744,11 @@ public final class MockTransportService extends TransportService {
         }
 
         @Override
+        public Version getVersion() {
+            return connection.getVersion();
+        }
+
+        @Override
         public void sendRequest(long requestId, String action, TransportRequest request, TransportRequestOptions options)
             throws IOException, TransportException {
             connection.sendRequest(requestId, action, request, options);
@@ -746,6 +802,12 @@ public final class MockTransportService extends TransportService {
     @Override
     protected void doClose() {
         super.doClose();
-        assert openConnections.size() == 0 : "still open connections: " + openConnections;
+        synchronized (openConnections) {
+            assert openConnections.size() == 0 : "still open connections: " + openConnections;
+        }
+    }
+
+    public DiscoveryNode getLocalDiscoNode() {
+        return this.getLocalNode();
     }
 }

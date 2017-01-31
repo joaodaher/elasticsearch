@@ -49,7 +49,6 @@ import org.elasticsearch.bootstrap.BootstrapForTesting;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.cluster.ClusterModule;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.PathUtils;
 import org.elasticsearch.common.io.PathUtilsForTesting;
@@ -130,6 +129,7 @@ import java.util.stream.Collectors;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.elasticsearch.common.util.CollectionUtils.arrayAsArrayList;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
@@ -170,6 +170,7 @@ public abstract class ESTestCase extends LuceneTestCase {
     }
 
     protected final Logger logger = Loggers.getLogger(getClass());
+    protected final DeprecationLogger deprecationLogger = new DeprecationLogger(logger);
     private ThreadContext threadContext;
 
     // -----------------------------------------------------------------
@@ -279,29 +280,38 @@ public abstract class ESTestCase extends LuceneTestCase {
             final List<String> warnings = threadContext.getResponseHeaders().get(DeprecationLogger.WARNING_HEADER);
             assertNull("unexpected warning headers", warnings);
         } finally {
-            DeprecationLogger.removeThreadContext(this.threadContext);
-            this.threadContext.close();
+            resetDeprecationLogger();
         }
     }
 
-    protected final void assertWarnings(String... expectedWarnings) throws IOException {
+    protected final void assertWarnings(String... expectedWarnings) {
         if (enableWarningsCheck() == false) {
             throw new IllegalStateException("unable to check warning headers if the test is not set to do so");
         }
         try {
             final List<String> actualWarnings = threadContext.getResponseHeaders().get(DeprecationLogger.WARNING_HEADER);
-            assertEquals("Expected " + expectedWarnings.length + " warnings but found " + actualWarnings.size() + "\nExpected: "
-                    + Arrays.asList(expectedWarnings) + "\nActual: " + actualWarnings, expectedWarnings.length, actualWarnings.size());
             for (String msg : expectedWarnings) {
-                assertThat(actualWarnings, hasItem(equalTo(msg)));
+                assertThat(actualWarnings, hasItem(containsString(msg)));
             }
+            assertEquals("Expected " + expectedWarnings.length + " warnings but found " + actualWarnings.size() + "\nExpected: "
+                + Arrays.asList(expectedWarnings) + "\nActual: " + actualWarnings, expectedWarnings.length, actualWarnings.size());
         } finally {
-            // "clear" current warning headers by setting a new ThreadContext
-            DeprecationLogger.removeThreadContext(this.threadContext);
-            this.threadContext.close();
-            this.threadContext = new ThreadContext(Settings.EMPTY);
-            DeprecationLogger.setThreadContext(this.threadContext);
+            resetDeprecationLogger();
         }
+    }
+
+    private void resetDeprecationLogger() {
+        // "clear" current warning headers by setting a new ThreadContext
+        DeprecationLogger.removeThreadContext(this.threadContext);
+        try {
+            this.threadContext.close();
+            // catch IOException to avoid that call sites have to deal with it. It is only declared because this class implements Closeable
+            // but it is impossible that this implementation will ever throw an IOException.
+        } catch (IOException ex) {
+            throw new AssertionError("IOException thrown while closing deprecation logger's thread context", ex);
+        }
+        this.threadContext = new ThreadContext(Settings.EMPTY);
+        DeprecationLogger.setThreadContext(this.threadContext);
     }
 
     private static final List<StatusData> statusData = new ArrayList<>();

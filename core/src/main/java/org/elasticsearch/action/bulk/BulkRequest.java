@@ -22,6 +22,7 @@ package org.elasticsearch.action.bulk;
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.CompositeIndicesRequest;
+import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.support.ActiveShardCount;
@@ -70,7 +71,7 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
      * {@link WriteRequest}s to this but java doesn't support syntax to declare that everything in the array has both types so we declare
      * the one with the least casts.
      */
-    final List<ActionRequest> requests = new ArrayList<>();
+    final List<DocWriteRequest> requests = new ArrayList<>();
     List<Object> payloads = null;
 
     protected TimeValue timeout = BulkShardRequest.DEFAULT_TIMEOUT;
@@ -85,14 +86,14 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
     /**
      * Adds a list of requests to be executed. Either index or delete requests.
      */
-    public BulkRequest add(ActionRequest... requests) {
-        for (ActionRequest request : requests) {
+    public BulkRequest add(DocWriteRequest... requests) {
+        for (DocWriteRequest request : requests) {
             add(request, null);
         }
         return this;
     }
 
-    public BulkRequest add(ActionRequest request) {
+    public BulkRequest add(DocWriteRequest request) {
         return add(request, null);
     }
 
@@ -102,7 +103,7 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
      * @param payload Optional payload
      * @return the current bulk request
      */
-    public BulkRequest add(ActionRequest request, @Nullable Object payload) {
+    public BulkRequest add(DocWriteRequest request, @Nullable Object payload) {
         if (request instanceof IndexRequest) {
             add((IndexRequest) request, payload);
         } else if (request instanceof DeleteRequest) {
@@ -118,8 +119,8 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
     /**
      * Adds a list of requests to be executed. Either index or delete requests.
      */
-    public BulkRequest add(Iterable<ActionRequest> requests) {
-        for (ActionRequest request : requests) {
+    public BulkRequest add(Iterable<DocWriteRequest> requests) {
+        for (DocWriteRequest request : requests) {
             add(request);
         }
         return this;
@@ -205,10 +206,10 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
     /**
      * The list of requests in this bulk request.
      */
-    public List<ActionRequest> requests() {
+    public List<DocWriteRequest> requests() {
         return this.requests;
     }
-    
+
     /**
      * The list of optional payloads associated with requests in the same order as the requests. Note, elements within
      * it might be null if no payload has been provided.
@@ -353,7 +354,7 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
                             } else if ("fields".equals(currentFieldName)) {
                                 throw new IllegalArgumentException("Action/metadata line [" + line + "] contains a simple value for parameter [fields] while a list is expected");
                             } else if ("_source".equals(currentFieldName)) {
-                                fetchSourceContext = FetchSourceContext.parse(parser);
+                                fetchSourceContext = FetchSourceContext.fromXContent(parser);
                             } else {
                                 throw new IllegalArgumentException("Action/metadata line [" + line + "] contains an unknown parameter [" + currentFieldName + "]");
                             }
@@ -366,7 +367,7 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
                                 throw new IllegalArgumentException("Malformed action/metadata line [" + line + "], expected a simple value for field [" + currentFieldName + "] but found [" + token + "]");
                             }
                         } else if (token == XContentParser.Token.START_OBJECT && "_source".equals(currentFieldName)) {
-                            fetchSourceContext = FetchSourceContext.parse(parser);
+                            fetchSourceContext = FetchSourceContext.fromXContent(parser);
                         } else if (token != XContentParser.Token.VALUE_NULL) {
                             throw new IllegalArgumentException("Malformed action/metadata line [" + line + "], expected a simple value for field [" + currentFieldName + "] but found [" + token + "]");
                         }
@@ -507,7 +508,7 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
      * @return Whether this bulk request contains index request with an ingest pipeline enabled.
      */
     public boolean hasIndexRequestsWithPipelines() {
-        for (ActionRequest actionRequest : requests) {
+        for (DocWriteRequest actionRequest : requests) {
             if (actionRequest instanceof IndexRequest) {
                 IndexRequest indexRequest = (IndexRequest) actionRequest;
                 if (Strings.hasText(indexRequest.getPipeline())) {
@@ -525,13 +526,13 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
         if (requests.isEmpty()) {
             validationException = addValidationError("no requests added", validationException);
         }
-        for (ActionRequest request : requests) {
+        for (DocWriteRequest request : requests) {
             // We first check if refresh has been set
             if (((WriteRequest<?>) request).getRefreshPolicy() != RefreshPolicy.NONE) {
                 validationException = addValidationError(
                         "RefreshPolicy is not supported on an item request. Set it on the BulkRequest instead.", validationException);
             }
-            ActionRequestValidationException ex = request.validate();
+            ActionRequestValidationException ex = ((WriteRequest<?>) request).validate();
             if (ex != null) {
                 if (validationException == null) {
                     validationException = new ActionRequestValidationException();
@@ -549,20 +550,7 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
         waitForActiveShards = ActiveShardCount.readFrom(in);
         int size = in.readVInt();
         for (int i = 0; i < size; i++) {
-            byte type = in.readByte();
-            if (type == 0) {
-                IndexRequest request = new IndexRequest();
-                request.readFrom(in);
-                requests.add(request);
-            } else if (type == 1) {
-                DeleteRequest request = new DeleteRequest();
-                request.readFrom(in);
-                requests.add(request);
-            } else if (type == 2) {
-                UpdateRequest request = new UpdateRequest();
-                request.readFrom(in);
-                requests.add(request);
-            }
+            requests.add(DocWriteRequest.readDocumentRequest(in));
         }
         refreshPolicy = RefreshPolicy.readFrom(in);
         timeout = new TimeValue(in);
@@ -573,15 +561,8 @@ public class BulkRequest extends ActionRequest implements CompositeIndicesReques
         super.writeTo(out);
         waitForActiveShards.writeTo(out);
         out.writeVInt(requests.size());
-        for (ActionRequest request : requests) {
-            if (request instanceof IndexRequest) {
-                out.writeByte((byte) 0);
-            } else if (request instanceof DeleteRequest) {
-                out.writeByte((byte) 1);
-            } else if (request instanceof UpdateRequest) {
-                out.writeByte((byte) 2);
-            }
-            request.writeTo(out);
+        for (DocWriteRequest request : requests) {
+            DocWriteRequest.writeDocumentRequest(out, request);
         }
         refreshPolicy.writeTo(out);
         timeout.writeTo(out);

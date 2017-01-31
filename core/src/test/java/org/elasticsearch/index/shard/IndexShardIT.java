@@ -56,6 +56,7 @@ import org.elasticsearch.index.flush.FlushStats;
 import org.elasticsearch.index.mapper.Mapping;
 import org.elasticsearch.index.mapper.ParseContext;
 import org.elasticsearch.index.mapper.ParsedDocument;
+import org.elasticsearch.index.mapper.Uid;
 import org.elasticsearch.index.mapper.UidFieldMapper;
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.indices.IndicesService;
@@ -99,9 +100,9 @@ public class IndexShardIT extends ESSingleNodeTestCase {
         return pluginList(InternalSettingsPlugin.class);
     }
 
-    private ParsedDocument testParsedDocument(String uid, String id, String type, String routing, long timestamp, long ttl,
+    private ParsedDocument testParsedDocument(String id, String type, String routing, long timestamp, long ttl,
                                               ParseContext.Document document, BytesReference source, Mapping mappingUpdate) {
-        Field uidField = new Field("_uid", uid, UidFieldMapper.Defaults.FIELD_TYPE);
+        Field uidField = new Field("_uid", Uid.createUid(type, id), UidFieldMapper.Defaults.FIELD_TYPE);
         Field versionField = new NumericDocValuesField("_version", 0);
         document.add(uidField);
         document.add(versionField);
@@ -319,9 +320,9 @@ public class IndexShardIT extends ESSingleNodeTestCase {
                 new ByteSizeValue(133 /* size of the operation + header&footer*/, ByteSizeUnit.BYTES)).build()).get();
         client().prepareIndex("test", "test", "0").setSource("{}").setRefreshPolicy(randomBoolean() ? IMMEDIATE : NONE).get();
         assertFalse(shard.shouldFlush());
-        ParsedDocument doc = testParsedDocument("1", "1", "test", null, -1, -1, new ParseContext.Document(),
+        ParsedDocument doc = testParsedDocument("1", "test", null, -1, -1, new ParseContext.Document(),
             new BytesArray(new byte[]{1}), null);
-        Engine.Index index = new Engine.Index(new Term("_uid", "1"), doc);
+        Engine.Index index = new Engine.Index(new Term("_uid", doc.uid()), doc);
         shard.index(index);
         assertTrue(shard.shouldFlush());
         assertEquals(2, shard.getEngine().getTranslog().totalOperations());
@@ -409,7 +410,7 @@ public class IndexShardIT extends ESSingleNodeTestCase {
         IndexingOperationListener listener = new IndexingOperationListener() {
 
             @Override
-            public void postIndex(Engine.Index index, boolean created) {
+            public void postIndex(ShardId shardId, Engine.Index index, Engine.IndexResult result) {
                 try {
                     assertNotNull(shardRef.get());
                     // this is all IMC needs to do - check current memory and refresh
@@ -423,7 +424,7 @@ public class IndexShardIT extends ESSingleNodeTestCase {
 
 
             @Override
-            public void postDelete(Engine.Delete delete) {
+            public void postDelete(ShardId shardId, Engine.Delete delete, Engine.DeleteResult result) {
                 try {
                     assertNotNull(shardRef.get());
                     // this is all IMC needs to do - check current memory and refresh

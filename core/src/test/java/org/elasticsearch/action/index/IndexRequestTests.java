@@ -19,6 +19,7 @@
 package org.elasticsearch.action.index;
 
 import org.elasticsearch.action.ActionRequestValidationException;
+import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.action.support.replication.ReplicationResponse;
 import org.elasticsearch.common.unit.TimeValue;
@@ -46,18 +47,24 @@ public class IndexRequestTests extends ESTestCase {
         String createUpper = "CREATE";
         String indexUpper = "INDEX";
 
-        assertThat(IndexRequest.OpType.fromString(create), equalTo(IndexRequest.OpType.CREATE));
-        assertThat(IndexRequest.OpType.fromString(index), equalTo(IndexRequest.OpType.INDEX));
-        assertThat(IndexRequest.OpType.fromString(createUpper), equalTo(IndexRequest.OpType.CREATE));
-        assertThat(IndexRequest.OpType.fromString(indexUpper), equalTo(IndexRequest.OpType.INDEX));
+        IndexRequest indexRequest = new IndexRequest("");
+        indexRequest.opType(create);
+        assertThat(indexRequest.opType() , equalTo(DocWriteRequest.OpType.CREATE));
+        indexRequest.opType(createUpper);
+        assertThat(indexRequest.opType() , equalTo(DocWriteRequest.OpType.CREATE));
+        indexRequest.opType(index);
+        assertThat(indexRequest.opType() , equalTo(DocWriteRequest.OpType.INDEX));
+        indexRequest.opType(indexUpper);
+        assertThat(indexRequest.opType() , equalTo(DocWriteRequest.OpType.INDEX));
     }
 
     public void testReadBogusString() {
         try {
-            IndexRequest.OpType.fromString("foobar");
+            IndexRequest indexRequest = new IndexRequest("");
+            indexRequest.opType("foobar");
             fail("Expected IllegalArgumentException");
         } catch (IllegalArgumentException e) {
-            assertThat(e.getMessage(), containsString("opType [foobar] not allowed"));
+            assertThat(e.getMessage(), equalTo("opType must be 'create' or 'index', found: [foobar]"));
         }
     }
 
@@ -95,7 +102,7 @@ public class IndexRequestTests extends ESTestCase {
         assertThat(validate, notNullValue());
         assertThat(validate.getMessage(),
                 containsString("id is too long, must be no longer than 512 bytes but was: 513"));
-}
+    }
 
     public void testSetTTLAsTimeValue() {
         IndexRequest indexRequest = new IndexRequest();
@@ -180,7 +187,7 @@ public class IndexRequestTests extends ESTestCase {
         assertEquals(forcedRefresh, indexResponse.forcedRefresh());
         assertEquals("IndexResponse[index=" + shardId.getIndexName() + ",type=" + type + ",id="+ id +
                 ",version=" + version + ",result=" + (created ? "created" : "updated") +
-                ",shards={\"_shards\":{\"total\":" + total + ",\"successful\":" + successful + ",\"failed\":0}}]",
+                ",shards={\"total\":" + total + ",\"successful\":" + successful + ",\"failed\":0}]",
                 indexResponse.toString());
     }
 }

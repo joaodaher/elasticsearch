@@ -100,6 +100,8 @@ public class MockRepository extends FsRepository {
 
     private volatile boolean blockOnDataFiles;
 
+    private volatile boolean atomicMove;
+
     private volatile boolean blocked = false;
 
     public MockRepository(RepositoryMetaData metadata, Environment environment,
@@ -114,6 +116,7 @@ public class MockRepository extends FsRepository {
         blockOnInitialization = metadata.settings().getAsBoolean("block_on_init", false);
         randomPrefix = metadata.settings().get("random", "default");
         waitAfterUnblock = metadata.settings().getAsLong("wait_after_unblock", 0L);
+        atomicMove = metadata.settings().getAsBoolean("atomic_move", true);
         logger.info("starting mock repository with random prefix {}", randomPrefix);
         mockBlobStore = new MockBlobStore(super.blobStore());
     }
@@ -154,29 +157,17 @@ public class MockRepository extends FsRepository {
         return mockBlobStore;
     }
 
-    public void unblock() {
-        unblockExecution();
-    }
-
-    public void blockOnDataFiles(boolean blocked) {
-        blockOnDataFiles = blocked;
-    }
-
-    public void blockOnControlFiles(boolean blocked) {
-        blockOnControlFiles = blocked;
-    }
-
-    public boolean blockOnDataFiles() {
-        return blockOnDataFiles;
-    }
-
-    public synchronized void unblockExecution() {
+    public synchronized void unblock() {
         blocked = false;
         // Clean blocking flags, so we wouldn't try to block again
         blockOnDataFiles = false;
         blockOnControlFiles = false;
         blockOnInitialization = false;
         this.notifyAll();
+    }
+
+    public void blockOnDataFiles(boolean blocked) {
+        blockOnDataFiles = blocked;
     }
 
     public boolean blocked() {
@@ -324,16 +315,16 @@ public class MockRepository extends FsRepository {
 
             @Override
             public void move(String sourceBlob, String targetBlob) throws IOException {
-                if (RandomizedContext.current().getRandom().nextBoolean()) {
+                if (atomicMove) {
+                    // atomic move since this inherits from FsBlobContainer which provides atomic moves
+                    maybeIOExceptionOrBlock(targetBlob);
+                    super.move(sourceBlob, targetBlob);
+                } else {
                     // simulate a non-atomic move, since many blob container implementations
                     // will not have an atomic move, and we should be able to handle that
                     maybeIOExceptionOrBlock(targetBlob);
                     super.writeBlob(targetBlob, super.readBlob(sourceBlob), 0L);
                     super.deleteBlob(sourceBlob);
-                } else {
-                    // atomic move since this inherits from FsBlobContainer which provides atomic moves
-                    maybeIOExceptionOrBlock(targetBlob);
-                    super.move(sourceBlob, targetBlob);
                 }
             }
 

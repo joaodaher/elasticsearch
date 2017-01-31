@@ -63,7 +63,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.LocalTransportAddress;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
-import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.index.VersionType;
@@ -139,7 +138,7 @@ import static org.hamcrest.Matchers.nullValue;
 public class IndexShardTests extends IndexShardTestCase {
 
     public static ShardStateMetaData load(Logger logger, Path... shardPaths) throws IOException {
-        return ShardStateMetaData.FORMAT.loadLatestState(logger, NamedXContentRegistry.EMPTY, shardPaths);
+        return ShardStateMetaData.FORMAT.loadLatestState(logger, shardPaths);
     }
 
     public static void write(ShardStateMetaData shardStateMetaData,
@@ -1475,7 +1474,7 @@ public class IndexShardTests extends IndexShardTestCase {
         public RepositoryData getRepositoryData() {
             Map<IndexId, Set<SnapshotId>> map = new HashMap<>();
             map.put(new IndexId(indexName, "blah"), emptySet());
-            return RepositoryData.initRepositoryData(Collections.emptyList(), map);
+            return new RepositoryData(Collections.emptyList(), map);
         }
 
         @Override
@@ -1483,13 +1482,12 @@ public class IndexShardTests extends IndexShardTestCase {
         }
 
         @Override
-        public SnapshotInfo finalizeSnapshot(SnapshotId snapshotId, List<IndexId> indices, long startTime, String failure, int totalShards,
-                                             List<SnapshotShardFailure> shardFailures, long repositoryStateId) {
+        public SnapshotInfo finalizeSnapshot(SnapshotId snapshotId, List<IndexId> indices, long startTime, String failure, int totalShards, List<SnapshotShardFailure> shardFailures) {
             return null;
         }
 
         @Override
-        public void deleteSnapshot(SnapshotId snapshotId, long repositoryStateId) {
+        public void deleteSnapshot(SnapshotId snapshotId) {
         }
 
         @Override

@@ -106,12 +106,12 @@ public class ShadowEngine extends Engine {
 
 
     @Override
-    public void index(Index index) throws EngineException {
+    public IndexResult index(Index index) {
         throw new UnsupportedOperationException(shardId + " index operation not allowed on shadow engine");
     }
 
     @Override
-    public void delete(Delete delete) throws EngineException {
+    public DeleteResult delete(Delete delete) {
         throw new UnsupportedOperationException(shardId + " delete operation not allowed on shadow engine");
     }
 
@@ -191,9 +191,6 @@ public class ShadowEngine extends Engine {
             ensureOpen();
             searcherManager.maybeRefreshBlocking();
         } catch (AlreadyClosedException e) {
-            // This means there's a bug somewhere: don't suppress it
-            throw new AssertionError(e);
-        } catch (EngineClosedException e) {
             throw e;
         } catch (Exception e) {
             try {

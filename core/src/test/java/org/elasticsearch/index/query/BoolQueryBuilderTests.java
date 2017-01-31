@@ -24,7 +24,6 @@ import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
-import org.elasticsearch.common.ParseFieldMatcher;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
@@ -57,7 +56,7 @@ public class BoolQueryBuilderTests extends AbstractQueryTestCase<BoolQueryBuilde
             query.disableCoord(randomBoolean());
         }
         if (randomBoolean()) {
-            query.minimumNumberShouldMatch(randomMinimumShouldMatch());
+            query.minimumShouldMatch(randomMinimumShouldMatch());
         }
         int mustClauses = randomIntBetween(0, 3);
         for (int i = 0; i < mustClauses; i++) {
@@ -243,14 +242,14 @@ public class BoolQueryBuilderTests extends AbstractQueryTestCase<BoolQueryBuilde
             boolQuery()
                 .should(termQuery("foo", "bar"))
                 .should(termQuery("foo2", "bar2"))
-                .minimumNumberShouldMatch("3")).toQuery(createShardContext());
+                .minimumShouldMatch("3")).toQuery(createShardContext());
         assertEquals(3, bq.getMinimumNumberShouldMatch());
 
         bq = (BooleanQuery) parseQuery(
             boolQuery()
                 .should(termQuery("foo", "bar"))
                 .should(termQuery("foo2", "bar2"))
-                .minimumNumberShouldMatch(3)).toQuery(createShardContext());
+                .minimumShouldMatch(3)).toQuery(createShardContext());
         assertEquals(3, bq.getMinimumNumberShouldMatch());
     }
 
@@ -259,7 +258,7 @@ public class BoolQueryBuilderTests extends AbstractQueryTestCase<BoolQueryBuilde
                 boolQuery()
                         .should(termQuery("foo", "bar"))
                         .should(termQuery("foo2", "bar2"))
-                        .minimumNumberShouldMatch("3")
+                        .minimumShouldMatch("3")
                         .disableCoord(true)).toQuery(createShardContext());
         assertEquals(3, bq.getMinimumNumberShouldMatch());
     }
@@ -338,7 +337,7 @@ public class BoolQueryBuilderTests extends AbstractQueryTestCase<BoolQueryBuilde
                 "}" +
               "}";
 
-        BoolQueryBuilder queryBuilder = (BoolQueryBuilder) parseQuery(query, ParseFieldMatcher.EMPTY);
+        BoolQueryBuilder queryBuilder = (BoolQueryBuilder) parseQuery(query);
         assertEquals(query, 0, queryBuilder.must().size());
         assertEquals(query, 0, queryBuilder.filter().size());
         assertEquals(query, 0, queryBuilder.mustNot().size());
@@ -350,12 +349,37 @@ public class BoolQueryBuilderTests extends AbstractQueryTestCase<BoolQueryBuilde
     }
 
     /**
+     * We deprecated `minimum_number_should_match`, it should still parse correctly but add a warning header
+     */
+    public void testMinimumNumberShouldMatchDeprecated() throws IOException {
+        String query =
+                "{" +
+                "\"bool\" : {" +
+                "  \"should\" : { " +
+                "    \"term\" : {" +
+                "      \"tag\" : {" +
+                "        \"value\" : \"wow\"," +
+                "        \"boost\" : 1.0" +
+                "      }" +
+                "    } " +
+                "   }," +
+                "  \"minimum_number_should_match\" : 1" +
+                "}}";
+
+        BoolQueryBuilder queryBuilder = (BoolQueryBuilder) parseQuery(query);
+        assertEquals(query, 1, queryBuilder.should().size());
+        assertEquals(query, "1", queryBuilder.minimumShouldMatch());
+        // we should have deprecation warning headers regardless of throwing an exception
+        assertWarnings("Deprecated field [minimum_number_should_match] used, expected [minimum_should_match] instead");
+    }
+
+    /**
      * test that unknown query names in the clauses throw an error
      */
     public void testUnknownQueryName() throws IOException {
         String query = "{\"bool\" : {\"must\" : { \"unknown_query\" : { } } } }";
 
-        ParsingException ex = expectThrows(ParsingException.class, () -> parseQuery(query, ParseFieldMatcher.EMPTY));
+        ParsingException ex = expectThrows(ParsingException.class, () -> parseQuery(query));
         assertEquals("no [query] registered for [unknown_query]", ex.getMessage());
     }
 
@@ -377,7 +401,7 @@ public class BoolQueryBuilderTests extends AbstractQueryTestCase<BoolQueryBuilde
                 "    }\n" +
                 "  }\n" +
                 "}";
-        ParsingException ex = expectThrows(ParsingException.class, () -> parseQuery(query, ParseFieldMatcher.EMPTY));
+        ParsingException ex = expectThrows(ParsingException.class, () -> parseQuery(query));
         assertEquals("[match] malformed query, expected [END_OBJECT] but found [FIELD_NAME]", ex.getMessage());
     }
 
